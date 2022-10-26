@@ -1,3 +1,5 @@
+// Copyright (c) HashiCorp, Inc
+// SPDX-License-Identifier: MPL-2.0
 import { Construct } from "constructs";
 import { TerraformBackend } from "../terraform-backend";
 import { keysToSnakeCase } from "../util";
@@ -6,6 +8,7 @@ import {
   DataTerraformRemoteStateConfig,
 } from "../terraform-remote-state";
 
+// eslint-disable-next-line jsdoc/require-jsdoc
 export class EtcdBackend extends TerraformBackend {
   constructor(scope: Construct, private readonly props: EtcdBackendProps) {
     super(scope, "backend", "etcd");
@@ -14,8 +17,17 @@ export class EtcdBackend extends TerraformBackend {
   protected synthesizeAttributes(): { [name: string]: any } {
     return keysToSnakeCase({ ...this.props });
   }
+
+  public getRemoteStateDataSource(
+    scope: Construct,
+    name: string,
+    _fromStack: string
+  ): TerraformRemoteState {
+    return new DataTerraformRemoteStateEtcd(scope, name, this.props);
+  }
 }
 
+// eslint-disable-next-line jsdoc/require-jsdoc
 export class DataTerraformRemoteStateEtcd extends TerraformRemoteState {
   constructor(
     scope: Construct,
@@ -25,11 +37,30 @@ export class DataTerraformRemoteStateEtcd extends TerraformRemoteState {
     super(scope, id, "etcd", config);
   }
 }
-
+/**
+ * Stores the state in etcd 2.x at a given path.
+ *
+ * This backend does not support state locking.
+ *
+ * Read more about this backend in the Terraform docs:
+ * https://www.terraform.io/language/settings/backends/etcd
+ */
 export interface EtcdBackendProps {
+  /**
+   * (Required) The path where to store the state
+   */
   readonly path: string;
+  /**
+   * (Required) A space-separated list of the etcd endpoints
+   */
   readonly endpoints: string;
+  /**
+   * (Optional) The username
+   */
   readonly username?: string;
+  /**
+   * (Optional) The password
+   */
   readonly password?: string;
 }
 

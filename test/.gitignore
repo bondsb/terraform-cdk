@@ -1,0 +1,9 @@
+edge-provider-bindings
+!translate-edge-tests.js
+python/edge/translated.py
+java/edge/Translated.java
+csharp/edge/Translated.cs
+go/edge/translated.go
+provider-tests/providers/**
+!provider-tests/generate-provider-test.js
+!provider-tests/test-provider.sh

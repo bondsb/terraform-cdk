@@ -1,3 +1,5 @@
+// Copyright (c) HashiCorp, Inc
+// SPDX-License-Identifier: MPL-2.0
 // Copied from https://github.com/aws/constructs/blob/e01e47f78ef1e9b600efcd23ff7705aa8d384017/lib/string-fragments.ts
 import { IFragmentConcatenator, IResolvable } from "./resolvable";
 import { Tokenization } from "./token";
@@ -17,6 +19,9 @@ type Fragment = LiteralFragment | TokenFragment | IntrinsicFragment;
  * @experimental
  */
 export class TokenizedStringFragments {
+  /**
+   * Fragments in the tokenized string
+   */
   private readonly fragments = new Array<Fragment>();
 
   /**
@@ -76,6 +81,32 @@ export class TokenizedStringFragments {
     for (const f of this.fragments) {
       if (f.type === "token") {
         ret.push(f.token);
+      }
+    }
+    return ret;
+  }
+
+  /**
+   * Return all literals from this string
+   */
+  public get literals(): IResolvable[] {
+    const ret = new Array<IResolvable>();
+    for (const f of this.fragments) {
+      if (f.type === "literal") {
+        ret.push(f.lit);
+      }
+    }
+    return ret;
+  }
+
+  /**
+   * Return all intrinsic fragments from this string
+   */
+  public get intrinsic(): IResolvable[] {
+    const ret = new Array<IResolvable>();
+    for (const f of this.fragments) {
+      if (f.type === "intrinsic") {
+        ret.push(f.value);
       }
     }
     return ret;

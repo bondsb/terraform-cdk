@@ -1,3 +1,5 @@
+// Copyright (c) HashiCorp, Inc
+// SPDX-License-Identifier: MPL-2.0
 // Copied from https://github.com/aws/constructs/blob/e01e47f78ef1e9b600efcd23ff7705aa8d384017/lib/resolvable.ts
 import { IConstruct } from "constructs";
 import { TokenString } from "./private/encoding";
@@ -17,6 +19,18 @@ export interface IResolveContext {
    * True when we are still preparing, false if we're rendering the final output
    */
   readonly preparing: boolean;
+
+  /**
+   * True when ${} should be ommitted (because already inside them), false otherwise
+   */
+  suppressBraces?: boolean;
+
+  /**
+   * TerraformIterators can be passed for block attributes and normal list attributes
+   * both require different handling when the iterable variable is accessed
+   * e.g. a dynamic block needs each.key while a for expression just needs key
+   */
+  iteratorContext?: "DYNAMIC_BLOCK" | "FOR_EXPRESSION";
 
   /**
    * Resolve an inner object
@@ -90,6 +104,16 @@ export interface ITokenResolver {
    * Resolve a tokenized list
    */
   resolveList(l: string[], context: IResolveContext): any;
+
+  /**
+   * Resolve a tokenized number list
+   */
+  resolveNumberList(l: number[], context: IResolveContext): any;
+
+  /**
+   * Resolve a tokenized map
+   */
+  resolveMap(m: { [key: string]: any }, context: IResolveContext): any;
 }
 
 /**
@@ -112,6 +136,9 @@ export interface IFragmentConcatenator {
  * Drops 'undefined's.
  */
 export class StringConcat implements IFragmentConcatenator {
+  /**
+   * Concatenates string fragments
+   */
   public join(left: any | undefined, right: any | undefined): any {
     if (left === undefined) {
       return right !== undefined ? `${right}` : undefined;
@@ -129,6 +156,9 @@ export class StringConcat implements IFragmentConcatenator {
  * @experimental
  */
 export class DefaultTokenResolver implements ITokenResolver {
+  /**
+   * Resolves tokens
+   */
   constructor(private readonly concat: IFragmentConcatenator) {}
 
   /**
@@ -172,10 +202,15 @@ export class DefaultTokenResolver implements ITokenResolver {
     return fragments.mapTokens({ mapToken: context.resolve }).join(this.concat);
   }
 
+  /**
+   * Resolves a list of string
+   */
   public resolveList(xs: string[], context: IResolveContext) {
     // Must be a singleton list token, because concatenation is not allowed.
     if (xs.length !== 1) {
-      throw new Error(`Cannot add elements to list token, got: ${xs}`);
+      throw new Error(
+        `Cannot add elements to list token, got: ${xs}. You tried to add a value to a referenced list, instead use Fn.concat([yourReferencedList, ["my", "new", "items"]]).`
+      );
     }
 
     const str = TokenString.forListToken(xs[0]);
@@ -184,6 +219,49 @@ export class DefaultTokenResolver implements ITokenResolver {
     if (fragments.length !== 1) {
       throw new Error(
         `Cannot concatenate strings in a tokenized string array, got: ${xs[0]}`
+      );
+    }
+
+    return fragments.mapTokens({ mapToken: context.resolve }).firstValue;
+  }
+
+  /**
+   * Resolves a list of numbers
+   */
+  public resolveNumberList(xs: number[], context: IResolveContext) {
+    // Must be a singleton list token, because concatenation is not allowed.
+    if (xs.length !== 1) {
+      throw new Error(
+        `Cannot add elements to list token, got: ${xs}. You tried to add a value to a referenced list, instead use Fn.concat([yourReferencedList, [42, 43, 44]]).`
+      );
+    }
+
+    const token = TokenMap.instance().lookupNumberList(xs);
+    if (token === undefined) {
+      return xs;
+    }
+    return context.resolve(token);
+  }
+
+  /**
+   * Resolves a map token
+   */
+  public resolveMap(xs: { [key: string]: any }, context: IResolveContext) {
+    const keys = Object.keys(xs);
+    if (keys.length !== 1) {
+      throw new Error(
+        `Cannot add elements to map token, got: ${JSON.stringify(
+          xs
+        )}. You tried to add a value to a referenced map, instead use Fn.mergeMaps([yourReferencedMap, { your: 'value' }]).`
+      );
+    }
+
+    const str = TokenString.forMapToken(keys[0]);
+    const tokenMap = TokenMap.instance();
+    const fragments = str.split(tokenMap.lookupToken.bind(tokenMap));
+    if (fragments.length !== 1) {
+      throw new Error(
+        `Cannot concatenate strings in a tokenized map, got: ${xs[0]}`
       );
     }
 

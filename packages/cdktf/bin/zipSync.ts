@@ -1,6 +1,9 @@
+// Copyright (c) HashiCorp, Inc
+// SPDX-License-Identifier: MPL-2.0
 import * as archiver from "archiver";
 import * as fs from "fs";
 
+// eslint-disable-next-line jsdoc/require-jsdoc
 function zipFolder(inputPath: string, outputPath: string) {
   const output = fs.createWriteStream(outputPath);
 

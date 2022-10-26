@@ -1,9 +1,9 @@
 {
   "name": "root",
-  "version": "0.5.0",
+  "version": "0.13.2",
   "private": true,
   "scripts": {
-    "build": "lerna run --scope cdktf* --scope @cdktf/* build",
+    "build": "lerna run --scope 'cdktf*' --scope @cdktf/* build",
     "format": "prettier --write .",
     "package": "lerna run package && tools/collect-dist.sh",
     "package:python": "lerna run package:python && tools/collect-dist.sh",
@@ -11,18 +11,17 @@
     "package:dotnet": "lerna run package:dotnet && tools/collect-dist.sh",
     "package:js": "lerna run package:js && tools/collect-dist.sh",
     "package-windows": "lerna run package && tools\\collect-dist.bat",
-    "bootstrap-plugin-cache": "./test/run-against-dist ./tools/bootstrap-plugin-cache.sh",
-    "examples:integration": "test/run-against-dist tools/build-examples.sh",
-    "examples:integration:java": "test/run-against-dist tools/build-examples-sequential.sh java",
-    "examples:integration:csharp": "test/run-against-dist tools/build-examples.sh csharp",
-    "examples:integration:python": "test/run-against-dist tools/build-examples.sh python",
-    "examples:integration:typescript": "test/run-against-dist tools/build-examples-sequential.sh typescript",
-    "examples:integration:go": "test/run-against-dist tools/build-examples-sequential.sh go",
-    "pretest": "prettier --check .",
-    "test": "lerna run --scope cdktf* --scope @cdktf* test",
-    "watch": "lerna run --parallel  --stream --scope @cdktf/* --scope cdktf* watch-preserve-output",
-    "link-packages": "lerna exec --scope cdktf* --scope @cdktf* yarn link",
-    "integration": "cd test && ./run-against-dist npx jest --runInBand",
+    "pretest": "yarn lint:workspace && prettier --check .",
+    "test": "lerna run --scope 'cdktf*' --scope @cdktf/* test",
+    "test:ci": "lerna run --scope 'cdktf*' --scope @cdktf/* test:ci",
+    "test:update": "npx lerna exec --parallel --no-bail --scope 'cdktf*' --scope '@cdktf/*' npx 'jest -u'",
+    "watch": "lerna run --parallel  --stream --scope @cdktf/* --scope 'cdktf*' watch-preserve-output",
+    "lint:workspace": "eslint .",
+    "lint:examples": "node tools/lint-examples.js",
+    "link-packages": "lerna exec --scope 'cdktf*' --scope @cdktf/* yarn link",
+    "integration": "cd test && yarn edge:install && ./run-against-dist npx jest --runInBand",
+    "integration:update": "cd test && yarn && yarn edge:install && NODE_OPTIONS='--max-old-space-size=7168' ./run-against-dist npx jest -u --runInBand",
+    "integration:single": "cd test && ./run-against-dist npx jest --runInBand",
     "integration:typescript": "cd test && ./run-against-dist npx jest --runInBand typescript",
     "integration:python": "cd test && ./run-against-dist npx jest --runInBand python",
     "integration:csharp": "cd test && ./run-against-dist npx jest --runInBand csharp",
@@ -38,7 +37,13 @@
     "build-docker-jsii": "docker build -t hashicorp/jsii-terraform .",
     "push-docker-jsii": "docker push hashicorp/jsii-terraform",
     "dist-clean": "lerna run dist-clean --stream && rm -rf dist",
-    "prepare": "husky install"
+    "prepare": "husky install",
+    "prepare-next-release": "standard-version --prerelease pre --release-as minor --skip.changelog=true --skip.commit=true",
+    "prepare-release": "tools/prepare-release.sh",
+    "release": "standard-version",
+    "generate-docs:api": "yarn && yarn build && yarn package && cd tools/documentation-generation && git clean -dfx . && yarn && yarn docs && npx prettier --write ../../website/docs/cdktf/api-reference/*.mdx",
+    "generate-docs:translations": "cd tools/documentation-code-snippets && yarn && yarn update-snippets && cd ../../ && yarn run format",
+    "generate-docs": "yarn generate-docs:translations && yarn generate-docs:api"
   },
   "workspaces": {
     "packages": [
@@ -51,24 +56,65 @@
       "examples/java/*",
       "examples/csharp/*",
       "examples/go/*",
-      "test",
       ".yalc/*",
       ".yalc/@*/*"
     ],
     "nohoist": [
       "archiver",
       "**/archiver",
-      "**/archiver/**"
+      "**/archiver/**",
+      "json-stable-stringify",
+      "**/json-stable-stringify",
+      "**/json-stable-stringify/**",
+      "semver",
+      "**/semver",
+      "**/semver/**"
     ]
   },
   "devDependencies": {
-    "changelog-parser": "^2.8.0",
+    "@types/prettier": "2.6.0",
+    "@typescript-eslint/eslint-plugin": "^4.33.0",
+    "@typescript-eslint/parser": "^4.33.0",
+    "changelog-parser": "^2.8.1",
+    "eslint": "^7.32.0",
+    "eslint-plugin-import": "^2.26.0",
+    "eslint-plugin-monorepo": "^0.3.2",
     "husky": ">=6",
     "lerna": "^4.0.0",
     "lint-staged": ">=10",
-    "prettier": "^2.3.1"
+    "prettier": "^2.7.1",
+    "standard-version": "^9.5.0"
   },
   "lint-staged": {
-    "**/*.{ts,tsx,js,css,md}": "prettier --write"
+    "packages/cdktf/**/*.ts": "yarn generate-docs:api",
+    "examples/*/documentation/**/*.{ts,cs,go,java,py}": "yarn generate-docs:translations",
+    "**/*.{tsx,js,css,md}": "prettier --write",
+    "**/*.ts": [
+      "prettier --write",
+      "./tools/add-copyright-header-to-file.sh"
+    ],
+    "examples/**": "yarn lint:examples"
+  },
+  "eslintConfig": {
+    "parser": "@typescript-eslint/parser",
+    "plugins": [
+      "@typescript-eslint",
+      "monorepo"
+    ],
+    "settings": {
+      "react": {
+        "version": "detect"
+      }
+    },
+    "rules": {
+      "monorepo/no-relative-import": "error"
+    },
+    "ignorePatterns": [
+      "node_modules",
+      "dist",
+      "coverage",
+      "*.d.ts",
+      "*.js"
+    ]
   }
 }

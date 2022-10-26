@@ -6,6 +6,8 @@
 !test.js
 *.d.ts
 node_modules
+!tools/build-example.js
+!tools/lint-examples.js
 
 # CDK asset staging directory
 .cdk.staging
@@ -34,3 +36,4 @@ bootstrap.json
 terraform-cdk.github-issues
 .idea
 tsconfig.tsbuildinfo
+examples/java/gradle-shared-module/.gradle/

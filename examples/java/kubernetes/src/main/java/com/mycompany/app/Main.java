@@ -3,28 +3,10 @@ package com.mycompany.app;
 import com.hashicorp.cdktf.App;
 import com.hashicorp.cdktf.TerraformStack;
 
-import imports.kubernetes.Deployment;
-import imports.kubernetes.DeploymentConfig;
-import imports.kubernetes.DeploymentMetadata;
-import imports.kubernetes.DeploymentSpec;
-import imports.kubernetes.DeploymentSpecSelector;
-import imports.kubernetes.DeploymentSpecTemplate;
-import imports.kubernetes.DeploymentSpecTemplateMetadata;
-import imports.kubernetes.DeploymentSpecTemplateSpec;
-import imports.kubernetes.DeploymentSpecTemplateSpecContainer;
-import imports.kubernetes.DeploymentSpecTemplateSpecContainerPort;
-import imports.kubernetes.DeploymentSpecTemplateSpecContainerResources;
-import imports.kubernetes.DeploymentSpecTemplateSpecContainerResourcesLimits;
-import imports.kubernetes.DeploymentSpecTemplateSpecContainerResourcesRequests;
-import imports.kubernetes.KubernetesProvider;
-import imports.kubernetes.Namespace;
-import imports.kubernetes.NamespaceConfig;
-import imports.kubernetes.NamespaceMetadata;
-import imports.kubernetes.Service;
-import imports.kubernetes.ServiceConfig;
-import imports.kubernetes.ServiceMetadata;
-import imports.kubernetes.ServiceSpec;
-import imports.kubernetes.ServiceSpecPort;
+import imports.kubernetes.deployment.*;
+import imports.kubernetes.provider.KubernetesProvider;
+import imports.kubernetes.namespace.*;
+import imports.kubernetes.service.*;
 
 import software.constructs.Construct;
 
@@ -38,38 +20,38 @@ public class Main extends TerraformStack {
 
         Namespace exampleNamespace = new Namespace(this, "tf-cdk-example",
             NamespaceConfig.builder()
-                .metadata(Collections.singletonList(
+                .metadata(
                     NamespaceMetadata.builder()
                         .name("tf-cdk-example")
                         .build()
-                ))
+                )
                 .build());
 
         String app = "nginx-example";
 
         new Deployment(this, "nginx-deployment", DeploymentConfig.builder()
-            .metadata(Collections.singletonList(
+            .metadata(
                 DeploymentMetadata.builder()
                     .name(app)
                     .namespace(exampleNamespace.getId())
                     .labels(Collections.singletonMap("app", app))
                     .build()
-            ))
-            .spec(Collections.singletonList(
+            )
+            .spec(
                 DeploymentSpec.builder()
                     .replicas(2)
-                    .selector(Collections.singletonList(
+                    .selector(
                         DeploymentSpecSelector.builder()
                             .matchLabels(Collections.singletonMap("app", app))
                             .build()
-                    ))
-                    .template(Collections.singletonList(DeploymentSpecTemplate.builder()
-                        .metadata(Collections.singletonList(
+                    )
+                    .template(DeploymentSpecTemplate.builder()
+                        .metadata(
                             DeploymentSpecTemplateMetadata.builder()
                                 .labels(Collections.singletonMap("app", app))
                                 .build()
-                        ))
-                        .spec(Collections.singletonList(
+                        )
+                        .spec(
                             DeploymentSpecTemplateSpec
                                 .builder()
                                 .container(Collections.singletonList(
@@ -81,33 +63,33 @@ public class Main extends TerraformStack {
                                                 .containerPort(80)
                                                 .build()
                                         ))
-                                        .resources(Collections.singletonList(
+                                        .resources(
                                             DeploymentSpecTemplateSpecContainerResources.builder()
-                                                .limits(Collections.singletonList(
+                                                .limits(
                                                     DeploymentSpecTemplateSpecContainerResourcesLimits.builder()
                                                         .cpu("0.5")
                                                         .memory("512Mi")
                                                         .build()
-                                                ))
-                                                .requests(Collections.singletonList(
+                                                )
+                                               .requests(
                                                     DeploymentSpecTemplateSpecContainerResourcesRequests.builder()
                                                         .cpu("250m")
                                                         .memory("50Mi")
                                                         .build()
-                                                )).build()
-                                        )).build()
+                                                ).build()
+                                        ).build()
                                 )).build()
-                        )).build())
+                        ).build()
                     ).build()
-            )).build());
+            ).build());
 
         new Service(this, "nginx-service", ServiceConfig.builder()
-            .metadata(Collections.singletonList(
+            .metadata(
                 ServiceMetadata.builder()
                     .name(app)
                     .namespace(exampleNamespace.getId())
-                    .build()))
-            .spec(Collections.singletonList(ServiceSpec.builder()
+                    .build())
+            .spec(ServiceSpec.builder()
                 .selector(Collections.singletonMap("app", app))
                 .port(Collections.singletonList(
                     ServiceSpecPort.builder()
@@ -117,7 +99,7 @@ public class Main extends TerraformStack {
                         .build()
                 ))
                 .type("NodePort")
-                .build()))
+                .build())
             .build());
     }
 

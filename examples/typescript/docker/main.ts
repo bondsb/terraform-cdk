@@ -1,3 +1,5 @@
+// Copyright (c) HashiCorp, Inc
+// SPDX-License-Identifier: MPL-2.0
 /*
 
 Starts a Docker container with an Nginx server.
@@ -15,7 +17,10 @@ Steps:
 
 import { Construct } from "constructs";
 import { App, TerraformStack } from "cdktf";
-import { Container, Image, DockerProvider } from "./.gen/providers/docker";
+import { Image } from "./.gen/providers/docker/image";
+import { DockerProvider } from "./.gen/providers/docker/provider";
+import { Container } from "./.gen/providers/docker/container";
+import { Service } from "./.gen/providers/docker/service";
 
 class MyStack extends TerraformStack {
   public readonly dockerImage: Image;
@@ -39,6 +44,15 @@ class MyStack extends TerraformStack {
           external: 8000,
         },
       ],
+    });
+
+    new Service(this, "nginxService", {
+      name: "nginx",
+      taskSpec: {
+        containerSpec: {
+          image: this.dockerImage.latest,
+        },
+      },
     });
   }
 }

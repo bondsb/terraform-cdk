@@ -1,9 +1,5 @@
-/**
- * Testing a full cycle of diff, deploy and destroy
- *
- * @group typescript
- */
-
+// Copyright (c) HashiCorp, Inc
+// SPDX-License-Identifier: MPL-2.0
 import { TestDriver } from "../../test-helper";
 import * as fs from "fs";
 import * as path from "path";

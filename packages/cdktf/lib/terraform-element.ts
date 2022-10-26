@@ -1,5 +1,10 @@
-import { Construct, Node } from "constructs";
+// Copyright (c) HashiCorp, Inc
+// SPDX-License-Identifier: MPL-2.0
+import { ok } from "assert";
+import { Construct } from "constructs";
+import { Token } from ".";
 import { TerraformStack } from "./terraform-stack";
+import { ref } from "./tfExpression";
 
 export interface TerraformElementMetadata {
   readonly path: string;
@@ -7,6 +12,7 @@ export interface TerraformElementMetadata {
   readonly stackTrace: string[];
 }
 
+// eslint-disable-next-line jsdoc/require-jsdoc
 export class TerraformElement extends Construct {
   public readonly cdktfStack: TerraformStack;
   protected readonly rawOverrides: any = {};
@@ -16,15 +22,26 @@ export class TerraformElement extends Construct {
    */
   private _logicalIdOverride?: string;
 
-  constructor(scope: Construct, id: string) {
+  /**
+   * Type of this element, used for fqn.
+   * This is undefined for
+   * - elements not referable, like TerraformOutput
+   * - elements using their own fqn implementation, like TerraformProvider
+   */
+  private readonly _elementType?: string;
+
+  constructor(scope: Construct, id: string, elementType?: string) {
     super(scope, id);
+    this._elementType = elementType;
 
-    this.constructNode.addMetadata("stacktrace", "trace");
+    if (Token.isUnresolved(id)) {
+      throw new Error(
+        "You cannot use a Token (e.g. a reference to an attribute) as the id of a construct"
+      );
+    }
+
+    this.node.addMetadata("stacktrace", "trace");
     this.cdktfStack = TerraformStack.of(this);
-  }
-
-  public get constructNode(): Node {
-    return Node.of(this);
   }
 
   public toTerraform(): any {
@@ -35,12 +52,29 @@ export class TerraformElement extends Construct {
     return {};
   }
 
-  public get friendlyUniqueId() {
-    if (this._logicalIdOverride) {
-      return this._logicalIdOverride;
-    } else {
-      return this.cdktfStack.getLogicalId(this);
+  private _fqnToken?: string;
+
+  public get fqn() {
+    if (!this._fqnToken) {
+      ok(!!this._elementType, "Element type not set");
+      this._fqnToken = Token.asString(
+        ref(`${this._elementType}.${this.friendlyUniqueId}`, this.cdktfStack)
+      );
     }
+    return this._fqnToken;
+  }
+
+  private _friendlyUniqueId?: string;
+
+  public get friendlyUniqueId() {
+    if (!this._friendlyUniqueId) {
+      if (this._logicalIdOverride) {
+        this._friendlyUniqueId = this._logicalIdOverride;
+      } else {
+        this._friendlyUniqueId = this.cdktfStack.getLogicalId(this);
+      }
+    }
+    return this._friendlyUniqueId;
   }
 
   /**
@@ -48,7 +82,22 @@ export class TerraformElement extends Construct {
    * @param newLogicalId The new logical ID to use for this stack element.
    */
   public overrideLogicalId(newLogicalId: string) {
+    ok(
+      !this._fqnToken,
+      "Logical ID may not be overriden once .fqn has been requested. Make sure to override the id before passing the construct to other constructs."
+    );
     this._logicalIdOverride = newLogicalId;
+  }
+
+  /**
+   * Resets a previously passed logical Id to use the auto-generated logical id again
+   */
+  public resetOverrideLogicalId() {
+    ok(
+      !this._fqnToken,
+      "Logical ID may not be overriden once .fqn has been requested. You can only reset the override before you pass the construct to other constructs."
+    );
+    this._logicalIdOverride = undefined;
   }
 
   public addOverride(path: string, value: any) {
@@ -80,11 +129,10 @@ export class TerraformElement extends Construct {
   protected get constructNodeMetadata(): { [key: string]: any } {
     return {
       metadata: {
-        path: this.constructNode.path,
+        path: this.node.path,
         uniqueId: this.friendlyUniqueId,
-        stackTrace: this.constructNode.metadata.find(
-          (e) => e.type === "stacktrace"
-        )?.trace,
+        stackTrace: this.node.metadata.find((e) => e.type === "stacktrace")
+          ?.trace,
       } as TerraformElementMetadata,
     };
   }

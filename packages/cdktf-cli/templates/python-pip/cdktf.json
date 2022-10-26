@@ -1,10 +1,12 @@
 {
   "language": "python",
   "app": "python3 ./main.py",
+  "projectId": "{{projectId}}",
+  "sendCrashReports": "{{sendCrashReports}}",
   "terraformProviders": [],
   "terraformModules": [],
   "codeMakerOutput": "imports",
   "context": {
-    {{futureFlags}}
+{{futureFlags}}
   }
 }

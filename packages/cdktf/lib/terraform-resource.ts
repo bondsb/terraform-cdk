@@ -1,9 +1,25 @@
+// Copyright (c) HashiCorp, Inc
+// SPDX-License-Identifier: MPL-2.0
 import { Construct } from "constructs";
 import { Token } from "./tokens";
 import { TerraformElement } from "./terraform-element";
 import { TerraformProvider } from "./terraform-provider";
-import { keysToSnakeCase, deepMerge } from "./util";
+import { keysToSnakeCase, deepMerge, processDynamicAttributes } from "./util";
 import { ITerraformDependable } from "./terraform-dependable";
+import { ref, dependable } from "./tfExpression";
+import { IResolvable } from "./tokens/resolvable";
+import { IInterpolatingParent } from "./terraform-addressable";
+import { ITerraformIterator } from "./terraform-iterator";
+import {
+  SSHProvisionerConnection,
+  WinrmProvisionerConnection,
+} from "./terraform-provisioner";
+import assert = require("assert");
+import {
+  FileProvisioner,
+  LocalExecProvisioner,
+  RemoteExecProvisioner,
+} from "./terraform-provisioner";
 
 export interface ITerraformResource {
   readonly terraformResourceType: string;
@@ -14,14 +30,15 @@ export interface ITerraformResource {
   count?: number;
   provider?: TerraformProvider;
   lifecycle?: TerraformResourceLifecycle;
+  forEach?: ITerraformIterator;
 
-  interpolationForAttribute(terraformAttribute: string): string;
+  interpolationForAttribute(terraformAttribute: string): IResolvable;
 }
 
 export interface TerraformResourceLifecycle {
   readonly createBeforeDestroy?: boolean;
   readonly preventDestroy?: boolean;
-  readonly ignoreChanges?: string[];
+  readonly ignoreChanges?: string[] | "all";
 }
 
 export interface TerraformMetaArguments {
@@ -29,11 +46,17 @@ export interface TerraformMetaArguments {
   readonly count?: number;
   readonly provider?: TerraformProvider;
   readonly lifecycle?: TerraformResourceLifecycle;
+  readonly forEach?: ITerraformIterator;
+  readonly provisioners?: Array<
+    FileProvisioner | LocalExecProvisioner | RemoteExecProvisioner
+  >;
+  readonly connection?: SSHProvisionerConnection | WinrmProvisionerConnection;
 }
 
 export interface TerraformProviderGeneratorMetadata {
   readonly providerName: string;
   readonly providerVersionConstraint?: string;
+  readonly providerVersion?: string;
 }
 
 export interface TerraformResourceConfig extends TerraformMetaArguments {
@@ -41,9 +64,10 @@ export interface TerraformResourceConfig extends TerraformMetaArguments {
   readonly terraformGeneratorMetadata?: TerraformProviderGeneratorMetadata;
 }
 
+// eslint-disable-next-line jsdoc/require-jsdoc
 export class TerraformResource
   extends TerraformElement
-  implements ITerraformResource, ITerraformDependable
+  implements ITerraformResource, ITerraformDependable, IInterpolatingParent
 {
   public readonly terraformResourceType: string;
   public readonly terraformGeneratorMetadata?: TerraformProviderGeneratorMetadata;
@@ -54,18 +78,28 @@ export class TerraformResource
   public count?: number;
   public provider?: TerraformProvider;
   public lifecycle?: TerraformResourceLifecycle;
+  public forEach?: ITerraformIterator;
+  public connection?: SSHProvisionerConnection | WinrmProvisionerConnection;
+  public provisioners?: Array<
+    FileProvisioner | LocalExecProvisioner | RemoteExecProvisioner
+  >;
 
   constructor(scope: Construct, id: string, config: TerraformResourceConfig) {
-    super(scope, id);
+    super(scope, id, config.terraformResourceType);
 
     this.terraformResourceType = config.terraformResourceType;
     this.terraformGeneratorMetadata = config.terraformGeneratorMetadata;
     if (Array.isArray(config.dependsOn)) {
-      this.dependsOn = config.dependsOn.map((dependency) => dependency.fqn);
+      this.dependsOn = config.dependsOn.map((dependency) =>
+        dependable(dependency)
+      );
     }
     this.count = config.count;
     this.provider = config.provider;
     this.lifecycle = config.lifecycle;
+    this.forEach = config.forEach;
+    this.provisioners = config.provisioners;
+    this.connection = config.connection;
   }
 
   public getStringAttribute(terraformAttribute: string) {
@@ -81,23 +115,49 @@ export class TerraformResource
   }
 
   public getBooleanAttribute(terraformAttribute: string) {
-    return Token.asString(
-      this.interpolationForAttribute(terraformAttribute)
-    ) as any as boolean;
+    return this.interpolationForAttribute(terraformAttribute);
   }
 
-  public get fqn(): string {
-    return Token.asString(
-      `${this.terraformResourceType}.${this.friendlyUniqueId}`
+  public getNumberListAttribute(terraformAttribute: string) {
+    return Token.asNumberList(
+      this.interpolationForAttribute(terraformAttribute)
     );
   }
 
+  public getStringMapAttribute(terraformAttribute: string) {
+    return Token.asStringMap(
+      this.interpolationForAttribute(terraformAttribute)
+    );
+  }
+
+  public getNumberMapAttribute(terraformAttribute: string) {
+    return Token.asNumberMap(
+      this.interpolationForAttribute(terraformAttribute)
+    );
+  }
+
+  public getBooleanMapAttribute(terraformAttribute: string) {
+    return Token.asBooleanMap(
+      this.interpolationForAttribute(terraformAttribute)
+    );
+  }
+
+  public getAnyMapAttribute(terraformAttribute: string) {
+    return Token.asAnyMap(this.interpolationForAttribute(terraformAttribute));
+  }
+
   public get terraformMetaArguments(): { [name: string]: any } {
+    assert(
+      !this.forEach || typeof this.count === "undefined",
+      `forEach and count are both set, but they are mutually exclusive. You can only use either of them. Check the resource at path: ${this.node.path}`
+    );
     return {
       dependsOn: this.dependsOn,
       count: this.count,
       provider: this.provider?.fqn,
       lifecycle: this.lifecycle,
+      forEach: this.forEach?._getForEachExpression(),
+      connection: this.connection,
     };
   }
 
@@ -111,12 +171,20 @@ export class TerraformResource
    */
   public toTerraform(): any {
     const attributes = deepMerge(
-      this.synthesizeAttributes(),
+      processDynamicAttributes(this.synthesizeAttributes()),
       keysToSnakeCase(this.terraformMetaArguments),
+      {
+        provisioner: this.provisioners?.map(({ type, ...props }) => ({
+          [type]: keysToSnakeCase(props),
+        })),
+      },
       this.rawOverrides
     );
 
-    attributes["//"] = this.constructNodeMetadata;
+    attributes["//"] = {
+      ...(attributes["//"] ?? {}),
+      ...this.constructNodeMetadata,
+    };
 
     return {
       resource: {
@@ -140,6 +208,9 @@ export class TerraformResource
   }
 
   public interpolationForAttribute(terraformAttribute: string) {
-    return `\${${this.terraformResourceType}.${this.friendlyUniqueId}.${terraformAttribute}}`;
+    return ref(
+      `${this.terraformResourceType}.${this.friendlyUniqueId}.${terraformAttribute}`,
+      this.cdktfStack
+    );
   }
 }

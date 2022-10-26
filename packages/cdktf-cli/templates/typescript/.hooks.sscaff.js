@@ -1,8 +1,6 @@
 const { execSync } = require('child_process');
 const { readFileSync, writeFileSync } = require('fs');
 
-const constructs_version = require('../../package.json').dependencies.constructs;
-
 exports.post = ctx => {
   // Terraform Cloud configuration settings if the organization name and workspace is set.
   if (ctx.OrganizationName != '') {
@@ -13,8 +11,8 @@ exports.post = ctx => {
   const npm_cdktf = ctx.npm_cdktf;
   if (!npm_cdktf) { throw new Error(`missing context "npm_cdktf"`); }
 
-  installDeps([npm_cdktf, `constructs@${constructs_version}`]);
-  installDeps(['@types/node', 'typescript'], true);
+  installDeps([npm_cdktf, `constructs@10`]);
+  installDeps(['@types/node', 'typescript', 'jest', '@types/jest', "ts-jest", "ts-node"], true);
 
   console.log(readFileSync('./help', 'utf-8'));
 };
@@ -31,14 +29,12 @@ function installDeps(deps, isDev) {
 function terraformCloudConfig(baseName, organizationName, workspaceName) {
   template = readFileSync('./main.ts', 'utf-8');
 
-  result = template.replace(`import { App, TerraformStack } from 'cdktf';`, `import { App, TerraformStack, RemoteBackend } from 'cdktf';`);
-  result = result.replace(`new MyStack(app, '${baseName}');`, `const stack = new MyStack(app, '${baseName}');
-new RemoteBackend(stack, {
-  hostname: 'app.terraform.io',
-  organization: '${organizationName}',
-  workspaces: {
-    name: '${workspaceName}'
-  }
+  result = template.replace(`import { App, TerraformStack } from "cdktf";`, `import { App, TerraformStack, CloudBackend, NamedCloudWorkspace } from "cdktf";`);
+  result = result.replace(`new MyStack(app, "${baseName}");`, `const stack = new MyStack(app, "${baseName}");
+new CloudBackend(stack, {
+  hostname: "app.terraform.io",
+  organization: "${organizationName}",
+  workspaces: new NamedCloudWorkspace("${workspaceName}")
 });`);
 
   writeFileSync('./main.ts', result, 'utf-8');

@@ -2,7 +2,9 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Text;
-using google;
+using google.Provider;
+using google.ComputeNetwork;
+using google.ComputeInstance;
 using Constructs;
 using HashiCorp.Cdktf;
 
@@ -29,13 +31,9 @@ namespace MyCompany.MyApp
             new ComputeInstance(this, "ComputeInstance", new ComputeInstanceConfig {
                 Name = "cdktf-instance",
                 MachineType = "f1-micro",
-                BootDisk = new [] {
-                    new ComputeInstanceBootDisk {
-                        InitializeParams = new [] {
-                            new ComputeInstanceBootDiskInitializeParams {
-                                Image = "debian-cloud/debian-9"
-                            }
-                        }
+                BootDisk = new ComputeInstanceBootDisk {
+                    InitializeParams = new ComputeInstanceBootDiskInitializeParams {
+                        Image = "debian-cloud/debian-9"
                     }
                 },
                 NetworkInterface = new [] {

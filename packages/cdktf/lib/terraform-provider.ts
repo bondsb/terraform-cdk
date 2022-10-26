@@ -1,8 +1,10 @@
+// Copyright (c) HashiCorp, Inc
+// SPDX-License-Identifier: MPL-2.0
 import { Construct } from "constructs";
 import { Token } from "./tokens";
 import { TerraformElement } from "./terraform-element";
 import { TerraformProviderGeneratorMetadata } from "./terraform-resource";
-import { keysToSnakeCase, deepMerge } from "./util";
+import { keysToSnakeCase, deepMerge, processDynamicAttributes } from "./util";
 
 export interface TerraformProviderConfig {
   readonly terraformResourceType: string;
@@ -10,6 +12,7 @@ export interface TerraformProviderConfig {
   readonly terraformProviderSource?: string;
 }
 
+// eslint-disable-next-line jsdoc/require-jsdoc
 export abstract class TerraformProvider extends TerraformElement {
   public readonly terraformResourceType: string;
   public readonly terraformGeneratorMetadata?: TerraformProviderGeneratorMetadata;
@@ -55,7 +58,9 @@ export abstract class TerraformProvider extends TerraformElement {
       terraform: {
         required_providers: {
           [this.terraformResourceType]: {
-            version: this.terraformGeneratorMetadata?.providerVersionConstraint,
+            version:
+              this.terraformGeneratorMetadata?.providerVersion ||
+              this.terraformGeneratorMetadata?.providerVersionConstraint, // fallback to previous to ease transition
             source: this.terraformProviderSource,
           },
         },
@@ -63,7 +68,9 @@ export abstract class TerraformProvider extends TerraformElement {
       provider: {
         [this.terraformResourceType]: [
           deepMerge(
-            keysToSnakeCase(this.synthesizeAttributes()),
+            keysToSnakeCase(
+              processDynamicAttributes(this.synthesizeAttributes())
+            ),
             this.rawOverrides,
             this.metaAttributes
           ),

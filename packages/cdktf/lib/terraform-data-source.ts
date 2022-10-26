@@ -1,3 +1,5 @@
+// Copyright (c) HashiCorp, Inc
+// SPDX-License-Identifier: MPL-2.0
 import { Construct } from "constructs";
 import { Token } from "./tokens";
 import { TerraformElement } from "./terraform-element";
@@ -8,12 +10,17 @@ import {
   TerraformResourceLifecycle,
   ITerraformResource,
 } from "./terraform-resource";
-import { keysToSnakeCase, deepMerge } from "./util";
+import { keysToSnakeCase, deepMerge, processDynamicAttributes } from "./util";
 import { ITerraformDependable } from "./terraform-dependable";
+import { ref, dependable } from "./tfExpression";
+import { IInterpolatingParent } from "./terraform-addressable";
+import { ITerraformIterator } from "./terraform-iterator";
+import assert = require("assert");
 
+// eslint-disable-next-line jsdoc/require-jsdoc
 export class TerraformDataSource
   extends TerraformElement
-  implements ITerraformResource, ITerraformDependable
+  implements ITerraformResource, ITerraformDependable, IInterpolatingParent
 {
   public readonly terraformResourceType: string;
   public readonly terraformGeneratorMetadata?: TerraformProviderGeneratorMetadata;
@@ -24,18 +31,22 @@ export class TerraformDataSource
   public count?: number;
   public provider?: TerraformProvider;
   public lifecycle?: TerraformResourceLifecycle;
+  public forEach?: ITerraformIterator;
 
   constructor(scope: Construct, id: string, config: TerraformResourceConfig) {
-    super(scope, id);
+    super(scope, id, `data.${config.terraformResourceType}`);
 
     this.terraformResourceType = config.terraformResourceType;
     this.terraformGeneratorMetadata = config.terraformGeneratorMetadata;
     if (Array.isArray(config.dependsOn)) {
-      this.dependsOn = config.dependsOn.map((dependency) => dependency.fqn);
+      this.dependsOn = config.dependsOn.map((dependency) =>
+        dependable(dependency)
+      );
     }
     this.count = config.count;
     this.provider = config.provider;
     this.lifecycle = config.lifecycle;
+    this.forEach = config.forEach;
   }
 
   public getStringAttribute(terraformAttribute: string) {
@@ -51,23 +62,48 @@ export class TerraformDataSource
   }
 
   public getBooleanAttribute(terraformAttribute: string) {
-    return Token.asString(
-      this.interpolationForAttribute(terraformAttribute)
-    ) as any as boolean;
+    return this.interpolationForAttribute(terraformAttribute);
   }
 
-  public get fqn(): string {
-    return Token.asString(
-      `data.${this.terraformResourceType}.${this.friendlyUniqueId}`
+  public getNumberListAttribute(terraformAttribute: string) {
+    return Token.asNumberList(
+      this.interpolationForAttribute(terraformAttribute)
     );
   }
 
+  public getStringMapAttribute(terraformAttribute: string) {
+    return Token.asStringMap(
+      this.interpolationForAttribute(terraformAttribute)
+    );
+  }
+
+  public getNumberMapAttribute(terraformAttribute: string) {
+    return Token.asNumberMap(
+      this.interpolationForAttribute(terraformAttribute)
+    );
+  }
+
+  public getBooleanMapAttribute(terraformAttribute: string) {
+    return Token.asBooleanMap(
+      this.interpolationForAttribute(terraformAttribute)
+    );
+  }
+
+  public getAnyMapAttribute(terraformAttribute: string) {
+    return Token.asAnyMap(this.interpolationForAttribute(terraformAttribute));
+  }
+
   public get terraformMetaArguments(): { [name: string]: any } {
+    assert(
+      !this.forEach || typeof this.count === "undefined",
+      `forEach and count are both set, but they are mutually exclusive. You can only use either of them. Check the data source at path: ${this.node.path}`
+    );
     return {
       dependsOn: this.dependsOn,
       count: this.count,
       provider: this.provider?.fqn,
       lifecycle: this.lifecycle,
+      forEach: this.forEach?._getForEachExpression(),
     };
   }
 
@@ -81,7 +117,7 @@ export class TerraformDataSource
    */
   public toTerraform(): any {
     const attributes = deepMerge(
-      this.synthesizeAttributes(),
+      processDynamicAttributes(this.synthesizeAttributes()),
       keysToSnakeCase(this.terraformMetaArguments),
       this.rawOverrides
     );
@@ -109,6 +145,9 @@ export class TerraformDataSource
   }
 
   public interpolationForAttribute(terraformAttribute: string) {
-    return `\${data.${this.terraformResourceType}.${this.friendlyUniqueId}.${terraformAttribute}}`;
+    return ref(
+      `data.${this.terraformResourceType}.${this.friendlyUniqueId}.${terraformAttribute}`,
+      this.cdktfStack
+    );
   }
 }

@@ -1,8 +1,27 @@
+// Copyright (c) HashiCorp, Inc
+// SPDX-License-Identifier: MPL-2.0
 import * as fs from "fs";
 import * as path from "path";
 import * as os from "os";
 import { execSync } from "child_process";
 import { convertProject, getTerraformConfigFromDir } from "../lib";
+import {
+  readSchema,
+  ConstructsMakerProviderTarget,
+  LANGUAGES,
+  config,
+} from "@cdktf/provider-generator";
+
+const providerRequirements = ["kreuzwerker/docker@ ~>2.15.0"];
+const CDKTF_CLI = path.resolve(
+  __dirname,
+  "..",
+  "..",
+  "..",
+  "..",
+  "packages",
+  "cdktf-cli"
+);
 
 const createFiles = (cwd: string, files: [string, string][]) => {
   files.forEach(([p, content]) => {
@@ -59,16 +78,16 @@ app.synth();`,
           "upgrade:next": "npm i cdktf@next cdktf-cli@next"
         },
         "engines": {
-          "node": ">=10.12"
+          "node": ">=14.0"
         },
         "dependencies": {
-          "cdktf": "*",
-          "constructs": "^3.3.75"
+          "cdktf": "latest",
+          "constructs": "^10.0.5"
         },
         "devDependencies": {
           "@types/node": "^14.0.26",
           "typescript": "^3.9.7",
-          "cdktf-cli": "*"
+          "cdktf-cli": "${CDKTF_CLI}"
         }
       }`,
     ],
@@ -150,7 +169,20 @@ function resources(plan: any) {
   }));
 }
 
-describe("convertProject", () => {
+let cachedProviderSchema: any;
+describe.skip("convertProject", () => {
+  beforeAll(async () => {
+    // Get all the provider schemas
+    const { providerSchema } = await readSchema(
+      providerRequirements.map((spec) =>
+        ConstructsMakerProviderTarget.from(
+          new config.TerraformProviderConstraint(spec),
+          LANGUAGES[0]
+        )
+      )
+    );
+    cachedProviderSchema = providerSchema;
+  });
   it("has a similar plan", async () => {
     const { importPath, targetPath } = terraformProject([
       [
@@ -198,17 +230,18 @@ describe("convertProject", () => {
 
     const { code, cdktfJson } = await convertProject(
       getTerraformConfigFromDir(importPath),
-      mainTs,
-      require(path.resolve(targetPath, "cdktf.json")),
       {
         language: "typescript",
+        providerSchema: cachedProviderSchema,
       }
     );
 
-    fs.writeFileSync(path.resolve(targetPath, "main.ts"), code, "utf8");
+    fs.writeFileSync(path.resolve(targetPath, "main.ts"), code(mainTs), "utf8");
     fs.writeFileSync(
       path.resolve(targetPath, "cdktf.json"),
-      JSON.stringify(cdktfJson),
+      JSON.stringify(
+        cdktfJson(require(path.resolve(targetPath, "cdktf.json")))
+      ),
       "utf8"
     );
 

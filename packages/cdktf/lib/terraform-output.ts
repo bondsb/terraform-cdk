@@ -1,29 +1,33 @@
+// Copyright (c) HashiCorp, Inc
+// SPDX-License-Identifier: MPL-2.0
 import { Construct } from "constructs";
 import { TerraformElement } from "./terraform-element";
-import { keysToSnakeCase, deepMerge } from "./util";
+import { deepMerge } from "./util";
 import { ITerraformDependable } from "./terraform-dependable";
+import { Expression } from ".";
+import { isArray } from "util";
+import { ITerraformAddressable } from "./terraform-addressable";
+import { Token } from "./tokens";
+
+const TERRAFORM_OUTPUT_SYMBOL = Symbol.for("cdktf/TerraformOutput");
 
 export interface TerraformOutputConfig {
-  readonly value:
-    | string
-    | number
-    | boolean
-    | any[]
-    | { [key: string]: any }
-    | undefined;
+  readonly value: Expression | ITerraformDependable;
   readonly description?: string;
   readonly sensitive?: boolean;
   readonly dependsOn?: ITerraformDependable[];
+  /**
+   * If set to true the synthesized Terraform Output will be named after the `id`
+   * passed to the constructor instead of the default (TerraformOutput.friendlyUniqueId)
+   *
+   * @default false
+   */
+  readonly staticId?: boolean;
 }
 
+// eslint-disable-next-line jsdoc/require-jsdoc
 export class TerraformOutput extends TerraformElement {
-  public value:
-    | string
-    | number
-    | boolean
-    | any[]
-    | { [key: string]: any }
-    | undefined;
+  public value: Expression | ITerraformAddressable;
   public description?: string;
   public sensitive?: boolean;
   public dependsOn?: ITerraformDependable[];
@@ -35,14 +39,63 @@ export class TerraformOutput extends TerraformElement {
     this.description = config.description;
     this.sensitive = config.sensitive;
     this.dependsOn = config.dependsOn;
+    this.staticId = config.staticId || false;
+    Object.defineProperty(this, TERRAFORM_OUTPUT_SYMBOL, { value: true });
+  }
+
+  public static isTerrafromOutput(x: any): x is TerraformOutput {
+    return x !== null && typeof x === "object" && TERRAFORM_OUTPUT_SYMBOL in x;
+  }
+
+  public set staticId(staticId: boolean) {
+    if (staticId) this.overrideLogicalId(this.node.id);
+    else this.resetOverrideLogicalId();
+  }
+
+  public get staticId(): boolean {
+    return this.friendlyUniqueId === this.node.id;
+  }
+
+  private isITerraformAddressable(
+    object: any
+  ): object is ITerraformAddressable {
+    return (
+      object &&
+      typeof object === "object" &&
+      !isArray(object) &&
+      "fqn" in object
+    );
+  }
+
+  private synthesizeValue(arg: any): any {
+    if (Token.isUnresolved(arg)) {
+      return arg;
+    }
+
+    if (this.isITerraformAddressable(arg)) {
+      return arg.fqn;
+    }
+
+    if (Array.isArray(arg)) {
+      return arg.map((innerArg) => this.synthesizeValue(innerArg));
+    }
+
+    if (typeof arg === "object") {
+      return Object.keys(arg).reduce((result, key) => {
+        result[key] = this.synthesizeValue(arg[key]);
+        return result;
+      }, {} as { [key: string]: string });
+    }
+
+    return arg;
   }
 
   protected synthesizeAttributes(): { [key: string]: any } {
     return {
-      value: this.value,
+      value: this.synthesizeValue(this.value),
       description: this.description,
       sensitive: this.sensitive,
-      dependsOn: this.dependsOn?.map((resource) => `\${${resource.fqn}}`),
+      depends_on: this.dependsOn?.map((resource) => resource.fqn),
     };
   }
 
@@ -50,12 +103,13 @@ export class TerraformOutput extends TerraformElement {
     return {
       output: {
         [this.friendlyUniqueId]: deepMerge(
-          keysToSnakeCase(this.synthesizeAttributes()),
+          this.synthesizeAttributes(),
           this.rawOverrides
         ),
       },
     };
   }
+
   public toMetadata(): any {
     if (!Object.keys(this.rawOverrides).length) {
       return {};

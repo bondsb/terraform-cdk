@@ -1,3 +1,5 @@
+// Copyright (c) HashiCorp, Inc
+// SPDX-License-Identifier: MPL-2.0
 import { Construct } from "constructs";
 import { TerraformBackend } from "../terraform-backend";
 import { keysToSnakeCase } from "../util";
@@ -6,6 +8,7 @@ import {
   DataTerraformRemoteStateConfig,
 } from "../terraform-remote-state";
 
+// eslint-disable-next-line jsdoc/require-jsdoc
 export class SwiftBackend extends TerraformBackend {
   constructor(scope: Construct, private readonly props: SwiftBackendProps) {
     super(scope, "backend", "swift");
@@ -14,8 +17,17 @@ export class SwiftBackend extends TerraformBackend {
   protected synthesizeAttributes(): { [name: string]: any } {
     return keysToSnakeCase({ ...this.props });
   }
+
+  public getRemoteStateDataSource(
+    scope: Construct,
+    name: string,
+    _fromStack: string
+  ): TerraformRemoteState {
+    return new DataTerraformRemoteStateSwift(scope, name, this.props);
+  }
 }
 
+// eslint-disable-next-line jsdoc/require-jsdoc
 export class DataTerraformRemoteStateSwift extends TerraformRemoteState {
   constructor(
     scope: Construct,

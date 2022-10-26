@@ -1,6 +1,8 @@
+// Copyright (c) HashiCorp, Inc
+// SPDX-License-Identifier: MPL-2.0
 // Copied from https://github.com/aws/constructs/blob/e01e47f78ef1e9b600efcd23ff7705aa8d384017/lib/lazy.ts
 import { captureStackTrace } from "./private/stack-trace";
-import { IResolvable, IResolveContext } from "./resolvable";
+import { IPostProcessor, IResolvable, IResolveContext } from "./resolvable";
 import { Token } from "./token";
 
 /**
@@ -145,16 +147,31 @@ export class Lazy {
   }
 }
 
-abstract class LazyBase implements IResolvable {
+// eslint-disable-next-line jsdoc/require-jsdoc
+export abstract class LazyBase implements IResolvable {
   public readonly creationStack: string[];
+  private postProcessors: IPostProcessor[] = [];
 
   constructor() {
     this.creationStack = captureStackTrace();
   }
 
-  public abstract resolve(context: IResolveContext): any;
+  public resolve(context: IResolveContext): any {
+    return this.postProcessors.reduce(
+      (val, pp) => pp.postProcess(val, context),
+      this.resolveLazy(context)
+    );
+  }
+
+  protected abstract resolveLazy(context: IResolveContext): any;
+
   public toString() {
     return Token.asString(this);
+  }
+
+  // will be invoked when this Lazy's resolve() method is called
+  public addPostProcessor(postProcessor: IPostProcessor): void {
+    this.postProcessors.push(postProcessor);
   }
 
   /**
@@ -167,26 +184,29 @@ abstract class LazyBase implements IResolvable {
   }
 }
 
+// eslint-disable-next-line jsdoc/require-jsdoc
 class LazyString extends LazyBase {
   constructor(private readonly producer: IStringProducer) {
     super();
   }
 
-  public resolve(context: IResolveContext) {
+  public resolveLazy(context: IResolveContext) {
     return this.producer.produce(context);
   }
 }
 
+// eslint-disable-next-line jsdoc/require-jsdoc
 class LazyNumber extends LazyBase {
   constructor(private readonly producer: INumberProducer) {
     super();
   }
 
-  public resolve(context: IResolveContext) {
+  public resolveLazy(context: IResolveContext) {
     return this.producer.produce(context);
   }
 }
 
+// eslint-disable-next-line jsdoc/require-jsdoc
 class LazyList extends LazyBase {
   constructor(
     private readonly producer: IListProducer,
@@ -195,7 +215,7 @@ class LazyList extends LazyBase {
     super();
   }
 
-  public resolve(context: IResolveContext) {
+  public resolveLazy(context: IResolveContext) {
     const ret = this.producer.produce(context);
     if (ret !== undefined && ret.length === 0 && this.options.omitEmpty) {
       return undefined;
@@ -204,6 +224,7 @@ class LazyList extends LazyBase {
   }
 }
 
+// eslint-disable-next-line jsdoc/require-jsdoc
 class LazyAny extends LazyBase {
   constructor(
     private readonly producer: IAnyProducer,
@@ -212,7 +233,7 @@ class LazyAny extends LazyBase {
     super();
   }
 
-  public resolve(context: IResolveContext) {
+  public resolveLazy(context: IResolveContext) {
     const ret = this.producer.produce(context);
     if (Array.isArray(ret) && ret.length === 0 && this.options.omitEmptyArray) {
       return undefined;

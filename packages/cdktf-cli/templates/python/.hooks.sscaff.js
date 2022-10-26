@@ -3,8 +3,6 @@ const { chmodSync } = require('fs');
 const { readFileSync, writeFileSync } = require('fs');
 const os = require('os');
 
-const cli = require.resolve('../../bin/cdktf');
-
 exports.pre = () => {
   try {
     if (os.platform() === 'win32') {
@@ -14,7 +12,7 @@ exports.pre = () => {
       execSync('which pipenv')
     }
   } catch {
-    console.error(`Unable to find "pipenv". Install from https://pipenv.kennethreitz.org`)
+    console.error(`Unable to find "pipenv". Follow the instructions from https://pipenv.pypa.io/`)
     process.exit(1);
   }
 };
@@ -33,6 +31,7 @@ exports.post = options => {
 
   execSync('pipenv install', { stdio: 'inherit' });
   execSync(`pipenv install ${pypi_cdktf}`, { stdio: 'inherit' });
+  execSync(`pipenv install pytest`, { stdio: 'inherit' });
   chmodSync('main.py', '700');
 
   console.log(readFileSync('./help', 'utf-8'));
@@ -42,13 +41,13 @@ function terraformCloudConfig(baseName, organizationName, workspaceName) {
   template = readFileSync('./main.py', 'utf-8');
 
   const templateWithImports = template.replace(`from cdktf import App, TerraformStack`,
-    `from cdktf import App, TerraformStack, RemoteBackend, NamedRemoteWorkspace`)
+    `from cdktf import App, TerraformStack, CloudBackend, NamedCloudWorkspace`)
 
   const result = templateWithImports.replace(`MyStack(app, "${baseName}")`, `stack = MyStack(app, "${baseName}")
-RemoteBackend(stack,
+CloudBackend(stack,
   hostname='app.terraform.io',
   organization='${organizationName}',
-  workspaces=NamedRemoteWorkspace('${workspaceName}')
+  workspaces=NamedCloudWorkspace('${workspaceName}')
 )`);
 
   writeFileSync('./main.py', result, 'utf-8');

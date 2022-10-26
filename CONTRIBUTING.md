@@ -1,9 +1,11 @@
 # Contributing
 
+## Prerequisites
+
 To build and install `terraform-cdk` locally you need to install:
 
-- Node version 12.16+
-- Go 1.16+
+- Node version 14.0+
+- Go 1.16
 - dotnet (v3.1.0)
 - mvn
 - pipenv
@@ -33,16 +35,7 @@ $ yarn build
 
 ## Examples
 
-We have a few top level script commands which are executed with Lerna to make the handling of examples easier:
-
-```
-yarn examples:reinstall // -> reinstall dependencies in Python examples
-yarn examples:build // -> fetch providers for examples and build them
-yarn examples:synth // -> synth all examples
-yarn examples:integration // -> run all of the above
-```
-
-For this work, each example needs a `package.json` with at least a minmal config like this:
+We run the examples as part of our integration tests for each Pull Request. To support this, each example needs a `package.json` with at least a minmal config like this:
 
 ```json
 {
@@ -57,7 +50,7 @@ For this work, each example needs a `package.json` with at least a minmal config
 }
 ```
 
-Lerna is filtering for the `@examples/` prefix in the `name` field.
+If the example shouldn't be run as part of the build pipeline, a `"private": true` entry can be added to `package.json`. Please make sure to add the ignore reason as JSON comment to `package.json` (e.g. `"//": "This example takes ages to build"`).
 
 ## Development
 
@@ -67,21 +60,55 @@ For development, you'd likely want to run:
 $ yarn watch
 ```
 
-This will watch for changes for the packages `cdktf` and `cdktf-cli`.
+This will watch for changes in all packages.
+
+**Note (for cdktf-cli only):** We're using [esbuild](https://esbuild.github.io/) for transpilation and bundling of the Typescript code. However, `esbuild` only transpiles, but doesn't do any type checking. That's why we've added an extra step as a pre-commit hook which transpiles the code with `tsc` to ensure commits don't have type errors.
+
+### CLI changes
+
+If your changes target only CLI and packages used by the CLI, running `yarn watch` will be sufficient. Although it's technically a bit different from what we ship you should be able to use a direct path to our binary entry point to execute commands. You can put this in a shell alias like this:
+
+```shell
+alias cdktfl='/path/to/terraform-cdk/packages/cdktf-cli/bundle/bin/cdktf' # For running cdktf locally
+alias cdktfld='node --inspect-brk /path/to/terraform-cdk/packages/cdktf-cli/bundle/bin/cdktf.js' # For running cdktf locally with debugging
+
+$ cdktfl get
+```
+
+### Library changes
+
+If you make changes to the library you need to run `yarn build && yarn package` to run tests against the new version. You should be able to use the typescript examples by just running `yarn watch`.
 
 ## Tests
 
 If you just want to run the tests:
 
 ```shell
-$ yarn test
+$ yarn test # to run all tests at once
+$ yarn test:watch # to run all tests in watch mode
 ```
 
 To run integration tests, package and run integration tests.
 
 ```shell
 $ yarn package
-$ yarn integration
+$ yarn integration # For all integration tests
+$ yarn integration:single -- typescript/synth-app # For a single integration test
+```
+
+````
+
+If you need to update the snapshot tests, please run this for the unit tests:
+
+```shell
+$ yarn test:update
+````
+
+To update the integration tests, please run this:
+
+```shell
+$ yarn integration:update # For all integration tests
+$ yarn integration:single -- -u typescript/synth-app # For a single integration test
 ```
 
 ## Local Usage
@@ -105,6 +132,8 @@ For Java [examples](./examples/java), packages are referenced from `./dist`, the
 #### C#
 
 For C# [examples](./examples/csharp), packages are referenced from `./dist`, there's no symlinking possible for live code updates. You'll have to explictly run `yarn package` to create new packages to be referenced in the project.
+
+Sometimes, after re-packaging the cdktf package for C#, an already initialized example might not update that package even when running yarn reinstall. In that case you can clear your local cache by running `dotnet nuget locals all --clear` and after a `yarn reinstall` it should all be updated.
 
 ### Outside of this Monorepo
 
@@ -212,83 +241,117 @@ CDKTF we will either remove the
 legacy behavior or flip the logic for all these features and then
 reset the `FEATURE_FLAGS` map for the next cycle.
 
-## Releasing
+## Debugging
 
-(this section is work in progress, but contains useful information)
+We recommend enabling logging when you develop new features. To get detailed information about CDKTF operations, set `CDKTF_LOG_LEVEL` to `debug`.
+
+## Releasing
 
 ### Steps
 
+#### Before the release
+
+Most of our tests are automated but there are some workflows we need to manually test for now.
+
+- Test `cdktf` against Terraform Enterprise
+
 #### Terraform CDK
 
-1. Create a new branch (e.g. `prepare-release-0.5.0`)
-2. Update the version in the root `package.json`
-3. Update the [CHANGELOG](./CHANGELOG.md)
-4. Create a PR to merge the new branch into `main`
-5. Merge the PR
-6. A new release will be build and published because the version changed
+1. Create a new branch (e.g. `prepare-release-0.9.0`)
+2. Update the [CHANGELOG](./CHANGELOG.md): `./tools/create-changelog.sh` should get you a good start
+3. Update the version in the root `package.json`
+4. Write an [upgrade guide](website/docs/cdktf/release/) (for major releases)
+5. Run `yarn generate-docs` to bring our api documentation up to date
+6. Create a PR to merge the new branch into `main`
+7. Merge the PR, a new release will be build and published because the version changed
+
+#### After the release
+
+- Update the prebuilt provider repository [like this](https://github.com/hashicorp/cdktf-repository-manager/pull/48) (If the release contains breaking changes the commit message needs to have a `!` after the scope so that the minor version is bumped. Example: `chore!: update cdktf version`) and run the [prebuilt provider upgrade workflow](https://github.com/hashicorp/cdktf-repository-manager/actions/workflows/upgrade-repositories.yml)
+- Update the learn examples and the end to end examples
+- Check if there are PRs left behind on our [triage board](https://github.com/orgs/hashicorp/projects/125/views/4)
+
+### Repositories to update
+
+- [Docker E2E](https://github.com/hashicorp/docker-on-aws-ecs-with-terraform-cdk-using-typescript)
+- [Serverless E2E](https://github.com/hashicorp/cdktf-integration-serverless-example)
+- [Learn Lambda Demo](https://github.com/hashicorp/learn-cdktf-assets-stacks-lambda)
+- [AWS Adapter](https://github.com/hashicorp/cdktf-aws-cdk)
 
 ### Helper for creating the changelog
 
-```javascript
-// fill this with a list of prs
-const prs = [767, ... ]
-const json = JSON.parse(require("child_process").execSync('gh pr list --state merged --json number,title --limit 200').toString()) // just a high enough limit
-const map = json.reduce((map, pr) => ({ ...map, [pr.number]: pr.title }), {});
-const lines = prs.map(num => {
-    if (map[num]) return `- ${map[num]} [\\#${num}](https://github.com/hashicorp/terraform-cdk/pull/${num})`
-    else throw new Error(`no json data for PR #${num}`)
-});
-console.log(lines.join('\n'));
+Just run the following script before bumping the version, it'll create a ready to copy markdown formatted changelog.
+
+```
+./tools/create-changelog.sh
 ```
 
-To get a list of commits since the last release you can e.g. visit a link like this: `https://github.com/hashicorp/terraform-cdk/compare/v0.4.1...main`. You'll find the PR numbers there as links. This should probably be automated at some point – at best using existing tooling for this :)
+Other than that, you can get a list of commits since the last release you can e.g. visit a link like this: `https://github.com/hashicorp/terraform-cdk/compare/v0.4.1...main`. You'll find the PR numbers there as links.
 
-#### Prebuilt Providers
+## Backporting releases
 
-We have a bunch of prebuilt providers which are depending on the current minor version of `cdktf`, e.g. `~> 0.5`.
+The following section describes how to release a fix without releasing everything that had been merged to `main` since the previous release. If you want to backport a fix to an earlier major version, you can skip the last step that brings `main` back in sync with after releasing a version that `main` would normally have released to next.
 
-Right now the upgrade is a rather manual process. However, we're aiming to improve this.
+You should always base your backported release on the previous release tag.
 
-1. Update the [provider project](https://github.com/terraform-cdk-providers/cdktf-provider-project) and change the [cdktf version](https://github.com/terraform-cdk-providers/cdktf-provider-project/blob/90d8c1a873437904060b2ec51d8fe607d7170828/src/cdktf-config.ts#L16) with a pull request. Make sure the title of the PR starts with `BREAKING CHANGE:`, which will bump the version accordingly when the PR is merged. The release process after merging the PR is fully automated
-2. Once the `provider project` package got published, the actual providers can be upgraded as well.
+Create a branch for the new release (in this case it's going to become v0.10.4) based on the tag of the previous release (v0.10.3)
 
-Here's an example script for the `0.5` upgrade. It assumes that the provider repositories were checked out locally relative to the script.
-
-```js
-#!/usr/bin/env node
-
-const path = require("path");
-const ps = require("child_process");
-
-// Please check the projects at https://cdk.tf/provider to ensure all the projects are up to date.
-const directories = [
-  "cdktf-provider-aws",
-  "cdktf-provider-azurerm",
-  "cdktf-provider-docker",
-  "cdktf-provider-github",
-  "cdktf-provider-google",
-  "cdktf-provider-kubernetes",
-  "cdktf-provider-null",
-  "cdktf-provider-external",
-  `cdktf-provider-datadog`,
-];
-
-directories.forEach((directory) => {
-  const [scope, namespace, provider] = directory.split("-");
-
-  console.log(
-    `running in ${directory} - https://cdk.tf/${namespace}/${provider}`
-  );
-
-  const workingDir = path.join(__dirname, directory);
-  const prepareScript = `git reset --hard && git clean -fdx && git checkout master && git up`;
-  const script = `
-    git checkout -b upgrade-cdktf-0.5 && yarn add --dev @cdktf/provider-project@latest && npx projen && git commit -am "BREAKING CHANGE: Bump cdktf dependency to 0.5 \n\n See https://github.com/hashicorp/terraform-cdk/pull/857" && yarn fetch && yarn compile && yarn docgen && yarn run commit && git push --set-upstream origin upgrade-cdktf-0.5
-  `;
-  ps.execSync(prepareScript, { cwd: workingDir, stdio: [null, null, null] });
-  ps.execSync(script, {
-    cwd: workingDir,
-    stdio: ["inherit", "inherit", "inherit"],
-  });
-});
 ```
+git checkout -b backport-release-0.10.4 v0.10.3
+```
+
+Push the newly created branch
+
+```
+git push --set-upstream origin backport-release-0.10.4
+```
+
+Create a new branch based of that backport branch to cherry pick your fixes into
+
+```
+gco -b backport-pr-1767-stop-pinning-jest
+```
+
+Add your fixes (you can use `git cherry-pick` or you can manually edit code and create commits)
+
+```
+git cherry-pick c59e5b342a4a264869c1327e64ecd6ac3010bf46 # commit hash from pr-1767
+```
+
+Create a PR against the backport-release branch (e.g. using the Github CLI)
+
+```
+gh pr create --base backport-release-0.10.4
+```
+
+It is recommended to include something along the lines of "Backported from #1767." in the PR description for future reference.
+
+Have coworkers review the branch & merge it.
+
+Create a release PR as you normally would do for regular releases **except basing it on your backport-release branch (e.g. `gh pr create --base backport-release-0.10.4`) and adjusting the changelog to only include backported fixes**.
+
+Merge the Release PR and make sure that it is released successfully before proceeding with the next step.
+
+To bring the version number back in sync with the main branch, post a PR against the `main` branch containing the changelog and incremented version from this release. Make sure that you don't drop possible "unreleased" entries (i.e. notes about breaking behaviour) that have been added to the `main` branch in the meantime. You really only want to bring the `CHANGELOG.md` and the version number in the `package.json` on `main` back in sync, so that future Release PRs will already be based on the correct version that was last released (e.g. the `create-changelog.sh` script depends on that version to be correct). The Release Github Action will only release if the version did not exist yet, so you don't need to be scared to overwrite an existing release (but also, you wouldn't be able to release another version if you tried to use the version of a backported release as that will already exist).
+
+### Example
+
+You can have a look at this branch and its commits / PRs for an example: [backport-release-0.10.4](https://github.com/hashicorp/terraform-cdk/commits/backport-release-0.10.4)
+
+## Issue Grooming
+
+To ensure we can properly prioritize new features and bugs we aim to keep our issues prioritized and sorted. We label new issues both in size (`size/small`, ..., `size/x-large`) and priority (`priority/awaiting-more-evidence`, ..., `priority/critical-urgent`) and we add labels for the affected part of the code base / effect (`cdktf-cli`, ..., `ux/cli`).
+
+Here are GitHub links that help this process:
+
+- [All new issues](https://github.com/hashicorp/terraform-cdk/issues?q=is%3Aopen+is%3Aissue+label%3Anew)
+- [All unprioritized issues (that are not waiting for an answer)](https://github.com/hashicorp/terraform-cdk/issues?q=is%3Aopen+is%3Aissue+-label%3Apriority%2Fawaiting-more-evidence+-label%3Apriority%2Fbacklog+-label%3Apriority%2Fcritical-urgent+-label%3Apriority%2Fimportant-longterm+-label%3Apriority%2Fimportant-soon+-label%3Aneeds-priority+-label%3Awaiting-on-answer+-label%3Anew)
+- [Issues to follow up on](https://github.com/hashicorp/terraform-cdk/issues?q=is%3Aopen+is%3Aissue+label%3Awaiting-on-answer+updated%3A%3C2021-11-01) (Query needs manual adjustment of the date)
+
+## Reproducing Bugs on Windows
+
+A good way to tackle windows related things is to use an AWS EC2 instance running Windows. Here's a Terraform repo with a bit of guideline on how to connect via Remote Desktop or VS Code Remote SSH https://github.com/skorfmann/windows-test-machine
+
+## Documentation
+
+The markdown files containing the documentation for CDK for Terraform are in the [`/website`](./website) directory. Refer to the [website README](./website/README.md) for more information.

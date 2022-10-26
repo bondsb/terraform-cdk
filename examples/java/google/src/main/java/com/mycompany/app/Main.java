@@ -10,12 +10,9 @@ import java.util.Arrays;
 import com.hashicorp.cdktf.App;
 import com.hashicorp.cdktf.TerraformStack;
 
-import imports.google.ComputeInstance;
-import imports.google.ComputeInstanceBootDisk;
-import imports.google.ComputeInstanceBootDiskInitializeParams;
-import imports.google.ComputeInstanceNetworkInterface;
-import imports.google.ComputeNetwork;
-import imports.google.GoogleProvider;
+import imports.google.compute_instance.*;
+import imports.google.compute_network.*;
+import imports.google.provider.GoogleProvider;
 import software.constructs.Construct;
 
 public class Main extends TerraformStack {
@@ -37,13 +34,13 @@ public class Main extends TerraformStack {
         ComputeInstance.Builder.create(this, "ComputeInstance")
             .name("cdktf-instance")
             .machineType("f1-micro")
-            .bootDisk(Arrays.asList(ComputeInstanceBootDisk.builder()
-            .initializeParams(Arrays.asList(ComputeInstanceBootDiskInitializeParams.builder()
+            .bootDisk(ComputeInstanceBootDisk.builder()
+            .initializeParams(ComputeInstanceBootDiskInitializeParams.builder()
                     .image("debian-cloud/debian-9")
                     .build()
-                ))
+                )
                 .build()
-            ))
+            )
             .networkInterface(Arrays.asList(ComputeInstanceNetworkInterface.builder()
                 .network(network.getName())
                 .build()

@@ -1,8 +1,14 @@
+// Copyright (c) HashiCorp, Inc
+// SPDX-License-Identifier: MPL-2.0
 import { Construct } from "constructs";
 import { TerraformElement } from "./terraform-element";
 import { keysToSnakeCase, deepMerge } from "./util";
 import { Token } from "./tokens";
+import { Expression, ref } from "./tfExpression";
+import { IResolvable } from "./tokens/resolvable";
+import { ITerraformAddressable } from "./terraform-addressable";
 
+// eslint-disable-next-line jsdoc/require-jsdoc
 export abstract class VariableType {
   public static readonly STRING = "string";
   public static readonly NUMBER = "number";
@@ -48,6 +54,11 @@ export abstract class VariableType {
   }
 }
 
+export interface TerraformVariableValidationConfig {
+  readonly condition: Expression;
+  readonly errorMessage: string;
+}
+
 export interface TerraformVariableConfig {
   readonly default?: any;
   readonly description?: string;
@@ -78,21 +89,39 @@ export interface TerraformVariableConfig {
   readonly type?: string;
 
   readonly sensitive?: boolean;
+
+  /*
+   * The nullable argument in a variable block controls whether the module caller may assign the value null to the variable.
+   */
+  readonly nullable?: boolean;
+
+  /**
+   * Specify arbitrary custom validation rules for a particular variable using a validation block nested within the corresponding variable block
+   */
+  readonly validation?: TerraformVariableValidationConfig[];
 }
 
-export class TerraformVariable extends TerraformElement {
+// eslint-disable-next-line jsdoc/require-jsdoc
+export class TerraformVariable
+  extends TerraformElement
+  implements ITerraformAddressable
+{
   public readonly default?: any;
   public readonly description?: string;
   public readonly type?: string;
   public readonly sensitive?: boolean;
+  public readonly nullable?: boolean;
+  private _validation?: TerraformVariableValidationConfig[];
 
   constructor(scope: Construct, id: string, config: TerraformVariableConfig) {
-    super(scope, id);
+    super(scope, id, "var");
 
     this.default = config.default;
     this.description = config.description;
     this.type = config.type;
     this.sensitive = config.sensitive;
+    this.nullable = config.nullable;
+    this._validation = config.validation;
   }
 
   public get stringValue(): string {
@@ -107,16 +136,28 @@ export class TerraformVariable extends TerraformElement {
     return Token.asList(this.interpolation());
   }
 
-  public get booleanValue(): boolean {
-    return Token.asString(this.interpolation()) as any as boolean;
+  public get booleanValue(): IResolvable {
+    return this.interpolation();
   }
 
   public get value(): any {
     return Token.asAny(this.interpolation());
   }
 
-  private interpolation(): any {
-    return `\${var.${this.friendlyUniqueId}}`;
+  public get validation(): TerraformVariableValidationConfig[] | undefined {
+    return this._validation;
+  }
+
+  public addValidation(validation: TerraformVariableValidationConfig) {
+    if (!this._validation) {
+      this._validation = [];
+    }
+
+    this._validation.push(validation);
+  }
+
+  private interpolation(): IResolvable {
+    return ref(`var.${this.friendlyUniqueId}`, this.cdktfStack);
   }
 
   public synthesizeAttributes(): { [key: string]: any } {
@@ -125,6 +166,11 @@ export class TerraformVariable extends TerraformElement {
       description: this.description,
       type: this.type,
       sensitive: this.sensitive,
+      nullable: this.nullable,
+      validation: this.validation?.map((validation) => ({
+        error_message: validation.errorMessage,
+        condition: validation.condition,
+      })),
     };
   }
 

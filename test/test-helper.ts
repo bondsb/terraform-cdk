@@ -1,12 +1,63 @@
+// Copyright (c) HashiCorp, Inc
+// SPDX-License-Identifier: MPL-2.0
 import { TemplateServer } from "./template-server";
-import { spawn } from "child_process";
+import { spawn, execSync } from "child_process";
+import * as execa from "execa";
 import { spawn as ptySpawn } from "node-pty";
 
-const { execSync } = require("child_process");
 const os = require("os");
 const path = require("path");
 const fs = require("fs");
 const fse = require("fs-extra");
+const stripAnsi = require("strip-ansi");
+
+function execSyncLogErrors(...args: Parameters<typeof execSync>) {
+  try {
+    return execSync(...args);
+  } catch (e) {
+    console.log(e.stdout?.toString());
+    console.error(e.stderr?.toString());
+    throw e;
+  }
+}
+
+export class QueryableStack {
+  private readonly stack: Record<string, any>;
+  constructor(stackInput: string) {
+    this.stack = JSON.parse(stackInput);
+  }
+
+  /**
+   * Returns the construct with the given ID in the stack, no matter if
+   * it's a data source or resource and which type it has
+   */
+  public byId(id: string): Record<string, any> {
+    const sanitizedId = id.replace(/_/g, "");
+    const constructs = (
+      [
+        ...Object.values(this.stack.resource || {}),
+        ...Object.values(this.stack.data || {}),
+      ] as Record<string, any>[]
+    ).reduce(
+      (carry, item) => ({ ...carry, ...item }),
+      {} as Record<string, any>
+    );
+
+    return constructs[sanitizedId];
+  }
+
+  public output(id: string): string {
+    return this.stack.output[id].value;
+  }
+
+  public toString(removeMetadata = false): string {
+    if (removeMetadata) {
+      return JSON.stringify({ ...this.stack, ["//"]: undefined }, null, 2);
+    }
+
+    return JSON.stringify(this.stack, null, 2);
+  }
+}
 
 export class TestDriver {
   public env: Record<string, string>;
@@ -16,7 +67,7 @@ export class TestDriver {
     this.env = Object.assign({ CI: 1 }, process.env, addToEnv);
   }
 
-  private async exec(
+  public async exec(
     command: string,
     args: string[] = []
   ): Promise<{ stdout: string; stderr: string }> {
@@ -38,16 +89,16 @@ export class TestDriver {
         process.on("close", (code) => {
           if (code === 0) {
             resolve({
-              stdout: stdout.join("\n"),
-              stderr: stderr.join("\n"),
+              stdout: stripAnsi(stdout.join("\n")),
+              stderr: stripAnsi(stderr.join("\n")),
             });
           } else {
             const error = new Error(
               `spawned command ${command} with args ${args} failed with exit code ${code}`
             );
             (error as any).code = code;
-            (error as any).stdout = stdout.join("\n");
-            (error as any).stderr = stderr.join("\n");
+            (error as any).stdout = stripAnsi(stdout.join("\n"));
+            (error as any).stderr = stripAnsi(stderr.join("\n"));
             reject(error);
           }
         });
@@ -86,20 +137,37 @@ export class TestDriver {
     fse.copySync(path.join(this.rootDir, source), dest);
   };
 
+  addFile = (dest, content) => {
+    fse.writeFileSync(dest, content);
+  };
+
+  setEnv = (key, value) => {
+    this.env[key] = value;
+  };
+
   stackDirectory = (stackName: string) => {
     return path.join(this.workingDirectory, "cdktf.out", "stacks", stackName);
   };
 
-  synthesizedStack = (stackName: string) => {
+  manifest = () => {
     return fs.readFileSync(
-      path.join(this.stackDirectory(stackName), "cdk.tf.json"),
-      "utf-8"
+      path.join(this.workingDirectory, "cdktf.out", "manifest.json"),
+      "utf8"
     );
   };
 
-  init = async (template: string) => {
+  synthesizedStack = (stackName: string) => {
+    return new QueryableStack(
+      fs.readFileSync(
+        path.join(this.stackDirectory(stackName), "cdk.tf.json"),
+        "utf-8"
+      )
+    );
+  };
+
+  init = async (template: string, additionalOptions = "") => {
     await this.exec(
-      `cdktf init --template ${template} --project-name="typescript-test" --project-description="typescript test app" --local`
+      `cdktf init --template ${template} --project-name="typescript-test" --project-description="typescript test app" --local --enable-crash-reporting=false ${additionalOptions}`
     );
   };
 
@@ -112,29 +180,65 @@ export class TestDriver {
   };
 
   list = (flags?: string) => {
-    return execSync(`cdktf list ${flags ? flags : ""}`, {
-      env: this.env,
-    }).toString();
+    return stripAnsi(
+      execSyncLogErrors(`cdktf list ${flags ? flags : ""}`, {
+        env: this.env,
+      }).toString()
+    );
   };
 
   diff = (stackName?: string) => {
-    return execSync(`cdktf diff ${stackName ? stackName : ""}`, {
-      env: this.env,
-    }).toString();
+    return stripAnsi(
+      execSyncLogErrors(`cdktf diff ${stackName ? stackName : ""}`, {
+        env: this.env,
+      }).toString()
+    );
   };
 
-  deploy = (stackName?: string) => {
-    return execSync(
-      `cdktf deploy ${stackName ? stackName : ""} --auto-approve`,
-      { env: this.env }
-    ).toString();
+  deploy = async (stackNames?: string[], outputsFilePath?: string) => {
+    const result = await execa(
+      "cdktf",
+      [
+        "deploy",
+        ...(stackNames || []),
+        "--auto-approve",
+        ...(outputsFilePath ? [`--outputs-file=${outputsFilePath}`] : []),
+      ],
+      { env: { ...process.env, ...this.env } } // make sure env is up to date
+    );
+    return stripAnsi(result.stdout);
   };
 
-  destroy = (stackName?: string) => {
-    return execSync(
-      `cdktf destroy ${stackName ? stackName : ""} --auto-approve`,
-      { env: this.env }
-    ).toString();
+  output = (
+    stackName?: string,
+    outputsFilePath?: string,
+    includeSensitiveOutputs?: boolean
+  ) => {
+    return stripAnsi(
+      execSyncLogErrors(
+        `cdktf output ${stackName ? stackName : ""} ${
+          outputsFilePath ? `--outputs-file=${outputsFilePath}` : ""
+        } ${
+          includeSensitiveOutputs
+            ? `--outputs-file-include-sensitive-outputs=true`
+            : ""
+        }`,
+        { env: this.env }
+      ).toString()
+    );
+  };
+
+  destroy = (stackNames?: string[]) => {
+    return stripAnsi(
+      execSyncLogErrors(
+        `cdktf destroy ${
+          stackNames ? stackNames.join(" ") : ""
+        } --auto-approve`,
+        {
+          env: this.env,
+        }
+      ).toString()
+    );
   };
 
   watch = () => {
@@ -148,46 +252,62 @@ export class TestDriver {
     return child;
   };
 
-  setupTypescriptProject = async () => {
+  setupTypescriptProject = async (options?: {
+    init?: { additionalOptions?: string };
+  }) => {
     this.switchToTempDir();
-    await this.init("typescript");
+    await this.init("typescript", options?.init?.additionalOptions);
     this.copyFiles("main.ts", "cdktf.json");
     await this.get();
   };
 
-  setupPythonProject = async () => {
+  setupPythonProject = async (options?: {
+    init?: { additionalOptions?: string };
+  }) => {
     this.switchToTempDir();
-    await this.init("python");
+    await this.init("python", options?.init?.additionalOptions);
     this.copyFiles("main.py", "cdktf.json");
     await this.get();
   };
 
-  setupCsharpProject = async () => {
+  setupCsharpProject = async (options?: {
+    init?: { additionalOptions?: string };
+  }) => {
     this.switchToTempDir();
-    await this.init("csharp");
-    this.copyFiles("Main.cs", "cdktf.json");
+    await this.init("csharp", options?.init?.additionalOptions);
+    this.copyFiles("Program.cs", "cdktf.json");
     await this.get();
-    execSync("dotnet add reference .gen/aws/aws.csproj", {
-      stdio: "inherit",
-      env: this.env,
-    });
+    execSyncLogErrors(
+      "dotnet add reference .gen/Providers.Null/Providers.Null.csproj",
+      {
+        stdio: "inherit",
+        env: this.env,
+      }
+    );
   };
 
-  setupJavaProject = async () => {
+  setupJavaProject = async (options?: {
+    init?: { additionalOptions?: string };
+  }) => {
     this.switchToTempDir();
-    await this.init("java");
+    await this.init("java", options?.init?.additionalOptions);
     this.copyFiles("cdktf.json");
     this.copyFile("Main.java", "src/main/java/com/mycompany/app/Main.java");
     await this.get();
   };
 
-  setupGoProject = async () => {
+  setupGoProject = async (options?: {
+    init?: { additionalOptions?: string };
+    cb?: (workingDirectory) => void;
+  }) => {
     this.switchToTempDir();
-    await this.init("go");
+    console.log(this.workingDirectory);
+    await this.init("go", options?.init?.additionalOptions);
     this.copyFiles("cdktf.json");
     this.copyFile("main.go", "main.go");
 
     await this.get();
+    options?.cb && options.cb(this.workingDirectory);
 
     // automatically retrieves required jsii-runtime module (used in generated providers)
     await this.exec("go mod tidy");
@@ -207,4 +327,25 @@ export class TestDriver {
       await templateServer.stop();
     }
   };
+
+  readLocalFile = (fileName: string): string => {
+    return fs.readFileSync(path.join(this.workingDirectory, fileName), "utf8");
+  };
+}
+
+export const onWindows = process.platform === "win32" ? it : it.skip;
+export const onPosix = process.platform !== "win32" ? it : it.skip;
+
+/**
+ * replaces all occurences like
+ * [2022-08-05T15:51:40.093] [ERROR]
+ * with
+ * [<TIMESTAMP>] [ERROR]
+ * to allow snapshot tests on output that produces errors which are logged with timestamps
+ */
+export function sanitizeTimestamps(output: string): string {
+  return output.replace(
+    /\[\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}.\d{3}\]/m,
+    "[<TIMESTAMP>]"
+  );
 }

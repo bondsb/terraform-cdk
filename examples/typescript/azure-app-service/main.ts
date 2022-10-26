@@ -1,11 +1,11 @@
+// Copyright (c) HashiCorp, Inc
+// SPDX-License-Identifier: MPL-2.0
 import { Construct } from "constructs";
 import { App, TerraformStack, TerraformOutput } from "cdktf";
-import {
-  AppService,
-  AppServicePlan,
-  AzurermProvider,
-  ResourceGroup,
-} from "./.gen/providers/azurerm";
+import { AzurermProvider } from "./.gen/providers/azurerm/provider";
+import { ResourceGroup } from "./.gen/providers/azurerm/resource-group";
+import { AppServicePlan } from "./.gen/providers/azurerm/app-service-plan";
+import { AppService } from "./.gen/providers/azurerm/app-service";
 
 class MyStack extends TerraformStack {
   constructor(scope: Construct, name: string) {
@@ -15,11 +15,11 @@ class MyStack extends TerraformStack {
     const imagename = "nginx:latest";
 
     new AzurermProvider(this, "azureFeature", {
-      features: [{}],
+      features: {},
     });
 
     const rg = new ResourceGroup(this, "cdktf-rg", {
-      name: "demo2020",
+      name: "cdktf-demo-rg",
       location: "westeurope",
     });
 
@@ -28,28 +28,25 @@ class MyStack extends TerraformStack {
       reserved: true,
       resourceGroupName: rg.name,
       location: rg.location,
-      name: "DockerCDKTF",
-      sku: [{ size: "F1", tier: "Free" }],
-      dependsOn: [rg],
+      name: "cdktf-demo-plan",
+      sku: { size: "F1", tier: "Free" },
     });
 
-    const appsvc = new AppService(this, "docker-cdktf", {
-      name: "cdktfdemoneil",
-      appServicePlanId: `${asp.id}`,
+    const app = new AppService(this, "cdktf-app", {
+      name: "cdktf-demo-app",
       location: rg.location,
+      appServicePlanId: asp.id,
       resourceGroupName: rg.name,
       clientAffinityEnabled: false,
       httpsOnly: true,
-      dependsOn: [asp],
-    });
-    appsvc.addOverride("site_config", [
-      {
-        linux_fx_version: `DOCKER|${imagename}`,
-        use_32_bit_worker_process: true,
+      siteConfig: {
+        linuxFxVersion: `DOCKER|${imagename}`,
+        use32BitWorkerProcess: true, // Required for free tier
       },
-    ]);
-    new TerraformOutput(this, "appweburl", {
-      value: `https://${appsvc.name}.azurewebsites.net/`,
+    });
+
+    new TerraformOutput(this, "cdktf-app-url", {
+      value: `https://${app.name}.azurewebsites.net/`,
     });
   }
 }

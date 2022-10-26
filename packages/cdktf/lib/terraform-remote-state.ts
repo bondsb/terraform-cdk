@@ -1,21 +1,32 @@
+// Copyright (c) HashiCorp, Inc
+// SPDX-License-Identifier: MPL-2.0
 import { Construct } from "constructs";
 import { TerraformElement } from "./terraform-element";
 import { Token } from "./tokens";
 import { deepMerge, keysToSnakeCase } from "./util";
+import { ref } from "./tfExpression";
+import { IResolvable } from "./tokens/resolvable";
+import { ITerraformAddressable } from "./terraform-addressable";
 
 export interface DataTerraformRemoteStateConfig {
   readonly workspace?: string;
   readonly defaults?: { [key: string]: any };
 }
 
-export abstract class TerraformRemoteState extends TerraformElement {
+// eslint-disable-next-line jsdoc/require-jsdoc
+export abstract class TerraformRemoteState
+  extends TerraformElement
+  implements ITerraformAddressable
+{
+  public static readonly tfResourceType = "terraform_remote_state";
+
   constructor(
     scope: Construct,
     id: string,
     private readonly backend: string,
     private readonly config: DataTerraformRemoteStateConfig
   ) {
-    super(scope, id);
+    super(scope, id, "data.terraform_remote_state");
   }
 
   public getString(output: string): string {
@@ -30,18 +41,19 @@ export abstract class TerraformRemoteState extends TerraformElement {
     return Token.asList(this.interpolationForAttribute(output));
   }
 
-  public getBoolean(output: string): boolean {
-    return Token.asString(
-      this.interpolationForAttribute(output)
-    ) as any as boolean;
+  public getBoolean(output: string): IResolvable {
+    return this.interpolationForAttribute(output);
   }
 
-  public get(output: string): any {
-    return Token.asAny(this.interpolationForAttribute(output));
+  public get(output: string): IResolvable {
+    return this.interpolationForAttribute(output);
   }
 
-  private interpolationForAttribute(terraformAttribute: string): any {
-    return `\${data.terraform_remote_state.${this.friendlyUniqueId}.outputs.${terraformAttribute}}`;
+  private interpolationForAttribute(terraformAttribute: string): IResolvable {
+    return ref(
+      `data.terraform_remote_state.${this.friendlyUniqueId}.outputs.${terraformAttribute}`,
+      this.cdktfStack
+    );
   }
 
   private extractConfig(): { [name: string]: any } {

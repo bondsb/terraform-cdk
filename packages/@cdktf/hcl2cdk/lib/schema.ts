@@ -1,3 +1,5 @@
+// Copyright (c) HashiCorp, Inc
+// SPDX-License-Identifier: MPL-2.0
 import * as z from "zod";
 import { ZodRawShape } from "zod/lib/src/types/base";
 
@@ -12,11 +14,18 @@ const outputConfig = tfObject({
 });
 export type Output = z.infer<typeof outputConfig>;
 
+const validationConfig = z.object({
+  error_message: z.string(),
+  condition: z.any(),
+});
+
 const variableConfig = tfObject({
   type: z.string(),
   default: z.any(),
   description: z.string(),
   sensitive: z.boolean(),
+  nullable: z.boolean().optional(),
+  validation: z.array(z.record(validationConfig)).optional(),
 });
 export type Variable = z.infer<typeof variableConfig>;
 
@@ -30,12 +39,15 @@ const resourceConfig = z.array(z.record(z.any()));
 export type Resource = z.infer<typeof resourceConfig>;
 export type Data = Resource;
 
+const providerSpecification = z.union([
+  z.object({ source: z.string(), version: z.string() }).partial(),
+  z.string(),
+]);
+
 const terraformConfig = z
   .object({
     required_version: z.string(),
-    required_providers: z.array(
-      z.record(z.object({ source: z.string(), version: z.string() }).partial())
-    ),
+    required_providers: z.array(z.record(providerSpecification)),
     backend: z.record(z.array(z.record(z.any()))),
   })
   .partial();

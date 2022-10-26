@@ -4,41 +4,57 @@ exports[`java full integration synth generates JSON 1`] = `
 "{
   \\"//\\": {
     \\"metadata\\": {
-      \\"version\\": \\"stubbed\\",
-      \\"stackName\\": \\"java-simple\\",
       \\"backend\\": \\"local\\",
-      \\"overrides\\": {
-        \\"aws_sns_topic\\": [
-          \\"display_name\\"
-        ]
+      \\"stackName\\": \\"java-simple\\",
+      \\"version\\": \\"stubbed\\"
+    },
+    \\"outputs\\": {}
+  },
+  \\"provider\\": {
+    \\"null\\": [
+      {}
+    ],
+    \\"random\\": [
+      {}
+    ]
+  },
+  \\"resource\\": {
+    \\"null_resource\\": {
+      \\"NullResource\\": {
+        \\"//\\": {
+          \\"metadata\\": {
+            \\"path\\": \\"java-simple/NullResource\\",
+            \\"uniqueId\\": \\"NullResource\\"
+          }
+        }
+      }
+    },
+    \\"random_string\\": {
+      \\"RandomString\\": {
+        \\"//\\": {
+          \\"metadata\\": {
+            \\"path\\": \\"java-simple/RandomString\\",
+            \\"uniqueId\\": \\"RandomString\\"
+          }
+        },
+        \\"length\\": 42
       }
     }
   },
   \\"terraform\\": {
+    \\"backend\\": {
+      \\"local\\": {
+        \\"path\\": \\"terraform.tfstate\\"
+      }
+    },
     \\"required_providers\\": {
-      \\"aws\\": {
-        \\"version\\": \\"~> 2.0\\",
-        \\"source\\": \\"aws\\"
-      }
-    }
-  },
-  \\"provider\\": {
-    \\"aws\\": [
-      {
-        \\"region\\": \\"eu-central-1\\"
-      }
-    ]
-  },
-  \\"resource\\": {
-    \\"aws_sns_topic\\": {
-      \\"Topic\\": {
-        \\"display_name\\": \\"my-first-sns-topic\\",
-        \\"//\\": {
-          \\"metadata\\": {
-            \\"path\\": \\"java-simple/Topic\\",
-            \\"uniqueId\\": \\"Topic\\"
-          }
-        }
+      \\"null\\": {
+        \\"source\\": \\"hashicorp/null\\",
+        \\"version\\": \\"3.1.1\\"
+      },
+      \\"random\\": {
+        \\"source\\": \\"hashicorp/random\\",
+        \\"version\\": \\"3.1.3\\"
       }
     }
   }

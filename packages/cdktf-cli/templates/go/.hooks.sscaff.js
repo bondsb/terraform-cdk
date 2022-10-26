@@ -2,9 +2,6 @@ const { execSync } = require('child_process');
 const { readFileSync, writeFileSync } = require('fs');
 const { readFile } = require('fs-extra');
 const os = require('os');
-const path = require('path');
-
-const cli = require.resolve('../../bin/cdktf');
 
 exports.pre = (variables) => {
   try {
@@ -37,10 +34,12 @@ exports.post = options => {
   // dist package
   if (go_cdktf.endsWith('cdktf')) {
     const gomod = readFileSync('./go.mod', 'utf-8');
-    
-    let result = gomod.replace(go_cdktf, 'v0.0.0');
+
+    // set the version of the package to the version of the CDKTF CLI as the package itself
+    // will be replaced and have no version on its own
+    let result = gomod.replace(go_cdktf, `v${cdktf_version}`);
     result += `\n\nreplace github.com/hashicorp/terraform-cdk-go/cdktf => ${go_cdktf}\n`;
-    
+
     writeFileSync('./go.mod', result, 'utf-8');
   }
 
@@ -52,12 +51,15 @@ exports.post = options => {
 function terraformCloudConfig(baseName, organizationName, workspaceName) {
   template = readFileSync('./main.go', 'utf-8');
 
-  result = template.replace(`NewMyStack(app, "${baseName}")`, `stack := NewMyStack(app, "{{ $base }}")
-	cdktf.NewRemoteBackend(stack, &cdktf.RemoteBackendProps{
+  result = template.replace(`NewMyStack(app, "${baseName}")`, `stack := NewMyStack(app, "${baseName}")
+	cdktf.NewCloudBackend(stack, &cdktf.CloudBackendProps{
 		Hostname:     jsii.String("app.terraform.io"),
 		Organization: jsii.String("${organizationName}"),
-		Workspaces:   cdktf.NewNamedRemoteWorkspace(jsii.String("${workspaceName}")),
+		Workspaces:   cdktf.NewNamedCloudWorkspace(jsii.String("${workspaceName}")),
 	})`);
+
+  // add import for jsii helper used above
+  result = result.replace(`"github.com/aws/constructs-go/constructs/v10"`, `"github.com/aws/constructs-go/constructs/v10"\n	"github.com/aws/jsii-runtime-go"`);
 
   writeFileSync('./main.go', result, 'utf-8');
 }

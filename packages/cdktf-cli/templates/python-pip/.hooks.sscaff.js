@@ -3,8 +3,6 @@ const { chmodSync } = require('fs');
 const { readFileSync, writeFileSync } = require('fs');
 const os = require('os');
 
-const cli = require.resolve('../../bin/cdktf');
-
 exports.pre = () => {
   try {
     if (os.platform() === 'win32') {
@@ -31,7 +29,8 @@ exports.post = options => {
     throw new Error(`missing context "pypi_cdktf"`);
   }
 
-  writeFileSync('requirements.txt', pypi_cdktf, 'utf-8');
+  writeFileSync('requirements.txt', pypi_cdktf + '\r\npytest\r\n', 'utf-8');
+  
   let installArgs = '';
   if (!process.env.VIRTUAL_ENV) {
     installArgs += '--user'
@@ -46,13 +45,13 @@ function terraformCloudConfig(baseName, organizationName, workspaceName) {
   template = readFileSync('./main.py', 'utf-8');
 
   const templateWithImports = template.replace(`from cdktf import App, TerraformStack`,
-    `from cdktf import App, TerraformStack, RemoteBackend, NamedRemoteWorkspace`)
+    `from cdktf import App, TerraformStack, CloudBackend, NamedCloudWorkspace`)
 
   const result = templateWithImports.replace(`MyStack(app, "${baseName}")`, `stack = MyStack(app, "${baseName}")
-RemoteBackend(stack,
+CloudBackend(stack,
   hostname='app.terraform.io',
   organization='${organizationName}',
-  workspaces=NamedRemoteWorkspace('${workspaceName}')
+  workspaces=NamedCloudWorkspace('${workspaceName}')
 )`);
 
   writeFileSync('./main.py', result, 'utf-8');

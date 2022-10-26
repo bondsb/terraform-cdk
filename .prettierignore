@@ -6,3 +6,14 @@ packages/cdktf-cli/templates/*/cdktf.json
 *.json
 **/.jsii
 packages/*/coverage
+packages/**/.yalc
+packages/**/dist
+dist
+packages/@cdktf/provider-generator/edge-provider-bindings
+test/edge-provider-bindings
+!tools/documentation-generation/generate-documentation.js
+!tools/build-example.js
+!tools/lint-examples.js
+!tools/update-github-project-board/index.ts
+**/go.mod
+**/go.sum

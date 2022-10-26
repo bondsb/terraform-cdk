@@ -1,10 +1,11 @@
 package main
 
 import (
-	eks "github.com/hashicorp/terraform-cdk/examples/go/aws/generated/aws_eks_module"
-	"github.com/hashicorp/terraform-cdk/examples/go/aws/generated/hashicorp/aws"
+	"github.com/hashicorp/terraform-cdk/examples/go/aws/generated/eks"
+	"github.com/hashicorp/terraform-cdk/examples/go/aws/generated/hashicorp/aws/awsprovider"
+	"github.com/hashicorp/terraform-cdk/examples/go/aws/generated/hashicorp/aws/ec2"
 
-	"github.com/aws/constructs-go/constructs/v3"
+	"github.com/aws/constructs-go/constructs/v10"
 	"github.com/aws/jsii-runtime-go"
 	"github.com/hashicorp/terraform-cdk-go/cdktf"
 )
@@ -12,11 +13,11 @@ import (
 func NewExampleCdktfGoAwsStack(scope constructs.Construct, id string) cdktf.TerraformStack {
 	stack := cdktf.NewTerraformStack(scope, &id)
 
-	aws.NewAwsProvider(stack, jsii.String("aws"), &aws.AwsProviderConfig{
+	awsprovider.NewAwsProvider(stack, jsii.String("aws"), &awsprovider.AwsProviderConfig{
 		Region: jsii.String("us-east-1"),
 	})
 
-	aws.NewInstance(stack, jsii.String("Hello"), &aws.InstanceConfig{
+	ec2.NewInstance(stack, jsii.String("Hello"), &ec2.InstanceConfig{
 		Ami:          jsii.String("ami-2757f631"),
 		InstanceType: jsii.String("t2.micro"),
 		Tags: &map[string]*string{
@@ -24,7 +25,7 @@ func NewExampleCdktfGoAwsStack(scope constructs.Construct, id string) cdktf.Terr
 		},
 	})
 
-	eks.NewAwsEksModule(stack, jsii.String("EKS"), &eks.AwsEksModuleOptions{
+	eks.NewEks(stack, jsii.String("EKS"), &eks.EksOptions{
 		ClusterName:    jsii.String("my-eks"),
 		Subnets:        jsii.Strings("a", "b"),
 		VpcId:          jsii.String("id"),

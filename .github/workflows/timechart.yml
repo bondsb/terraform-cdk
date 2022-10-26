@@ -1,7 +1,6 @@
 name: checkrun-timechart
 on:
-  pull_request:
-    types: [synchronize]
+  - pull_request
 
 jobs:
   checkrun-timechart:
@@ -9,9 +8,9 @@ jobs:
     steps:
       - name: wait
         id: waitforstatuschecks
-        uses: "WyriHaximus/github-action-wait-for-status@v1.2"
+        uses: "WyriHaximus/github-action-wait-for-status@v1.4.0"
         with:
-          ignoreActions: checkrun-timechart
+          ignoreActions: checkrun-timechart,update-snapshots-setup,update-snapshots-teardown,update-snapshots-linux,update-snapshots-windows,Vercel
         env:
           GITHUB_TOKEN: "${{ secrets.GITHUB_TOKEN }}"
 

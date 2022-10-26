@@ -1,8 +1,14 @@
-import { Construct, Node, ConstructMetadata } from "constructs";
+// Copyright (c) HashiCorp, Inc
+// SPDX-License-Identifier: MPL-2.0
+import { Construct, IConstruct } from "constructs";
 import * as fs from "fs";
 import { version } from "../package.json";
+import { DISABLE_STACK_TRACE_IN_METADATA } from "./annotations";
 import { Manifest } from "./manifest";
+import { ISynthesisSession } from "./synthesize";
+import { TerraformStack } from "./terraform-stack";
 
+const APP_SYMBOL = Symbol.for("cdktf/App");
 export const CONTEXT_ENV = "CDKTF_CONTEXT_JSON";
 export interface AppOptions {
   /**
@@ -46,6 +52,8 @@ export class App extends Construct {
    */
   public readonly targetStackId: string | undefined;
 
+  public readonly manifest: Manifest;
+
   /**
    * Whether to skip the validation during synthesis of the app
    */
@@ -57,43 +65,95 @@ export class App extends Construct {
    */
   constructor(options: AppOptions = {}) {
     super(undefined as any, "");
+    Object.defineProperty(this, APP_SYMBOL, { value: true });
+
     this.outdir = process.env.CDKTF_OUTDIR ?? options.outdir ?? "cdktf.out";
     this.targetStackId = process.env.CDKTF_TARGET_STACK_ID;
     this.skipValidation = options.skipValidation;
 
     this.loadContext(options.context);
 
-    const node = Node.of(this);
+    const node = this.node;
     if (options.stackTraces === false) {
-      node.setContext(ConstructMetadata.DISABLE_STACK_TRACE_IN_METADATA, true);
+      node.setContext(DISABLE_STACK_TRACE_IN_METADATA, true);
     }
 
     node.setContext("cdktfVersion", version);
+
+    if (!fs.existsSync(this.outdir)) {
+      fs.mkdirSync(this.outdir);
+    }
+    this.manifest = new Manifest(version, this.outdir);
+  }
+
+  public static isApp(x: any): x is App {
+    return x !== null && typeof x === "object" && APP_SYMBOL in x;
+  }
+
+  public static of(construct: IConstruct): App {
+    return _lookup(construct);
+
+    // eslint-disable-next-line jsdoc/require-jsdoc
+    function _lookup(c: IConstruct): App {
+      if (App.isApp(c)) {
+        return c;
+      }
+
+      const node = c.node;
+
+      if (!node.scope) {
+        throw new Error(
+          `No app could be identified for the construct at path '${construct.node.path}'`
+        );
+      }
+
+      return _lookup(node.scope);
+    }
   }
 
   /**
    * Synthesizes all resources to the output directory
    */
   public synth(): void {
-    if (!fs.existsSync(this.outdir)) {
-      fs.mkdirSync(this.outdir);
-    }
-
-    const manifest = new Manifest(version, this.outdir);
-
-    Node.of(this).synthesize({
+    const session: ISynthesisSession = {
       outdir: this.outdir,
       skipValidation: this.skipValidation,
-      sessionContext: {
-        manifest,
-      },
-    });
+      manifest: this.manifest,
+    };
 
-    manifest.writeToFile();
+    const stacks = this.node
+      .findAll()
+      .filter<TerraformStack>(
+        (c): c is TerraformStack => c instanceof TerraformStack
+      );
+
+    stacks.forEach((stack) => stack.prepareStack());
+    stacks.forEach((stack) => stack.synthesizer.synthesize(session));
+
+    this.manifest.writeToFile();
+  }
+
+  /**
+   * Creates a reference from one stack to another, invoked on prepareStack since it creates extra resources
+   */
+  public crossStackReference(
+    fromStack: TerraformStack,
+    toStack: TerraformStack,
+    identifier: string
+  ): string {
+    toStack.addDependency(fromStack);
+    const outputId =
+      fromStack.registerOutgoingCrossStackReference(
+        identifier
+      ).friendlyUniqueId;
+
+    const remoteState = toStack.registerIncomingCrossStackReference(fromStack);
+
+    return remoteState.getString(outputId);
   }
 
   private loadContext(defaults: { [key: string]: string } = {}) {
-    const node = Node.of(this);
+    const node = this.node;
 
     // prime with defaults passed through constructor
     for (const [k, v] of Object.entries(defaults)) {

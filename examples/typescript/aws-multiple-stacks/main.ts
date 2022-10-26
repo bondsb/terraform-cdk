@@ -1,6 +1,9 @@
+// Copyright (c) HashiCorp, Inc
+// SPDX-License-Identifier: MPL-2.0
 import { Construct } from "constructs";
 import { App, TerraformStack } from "cdktf";
-import { AwsProvider, Instance } from "./.gen/providers/aws";
+import { AwsProvider } from "./.gen/providers/aws/provider";
+import { Instance } from "./.gen/providers/aws/instance";
 
 interface MyStackConfig {
   environment: string;

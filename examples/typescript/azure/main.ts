@@ -1,13 +1,16 @@
+// Copyright (c) HashiCorp, Inc
+// SPDX-License-Identifier: MPL-2.0
 import { Construct } from "constructs";
 import { App, TerraformStack } from "cdktf";
-import { AzurermProvider, VirtualNetwork } from "./.gen/providers/azurerm";
+import { AzurermProvider } from "./.gen/providers/azurerm/provider";
+import { VirtualNetwork } from "./.gen/providers/azurerm/virtual-network";
 
 class MyStack extends TerraformStack {
   constructor(scope: Construct, name: string) {
     super(scope, name);
 
     new AzurermProvider(this, "AzureRm", {
-      features: [{}],
+      features: {},
     });
 
     new VirtualNetwork(this, "TfVnet", {

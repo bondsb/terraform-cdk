@@ -1,8 +1,11 @@
+// Copyright (c) HashiCorp, Inc
+// SPDX-License-Identifier: MPL-2.0
 import {
   Testing,
   TerraformStack,
   TerraformVariable,
   VariableType,
+  Fn,
 } from "../lib";
 import { TestResource } from "./helper";
 import { TestProvider } from "./helper/provider";
@@ -154,6 +157,52 @@ test("variable with variable default", () => {
   new TerraformVariable(stack, "other-variable", {
     default: a.value,
     type: "string",
+  });
+  expect(Testing.synth(stack)).toMatchSnapshot();
+});
+
+test("nullable variable", () => {
+  const app = Testing.app();
+  const stack = new TerraformStack(app, "test");
+
+  new TerraformVariable(stack, "test-variable", {
+    type: "string",
+    nullable: true,
+  });
+  expect(Testing.synth(stack)).toMatchSnapshot();
+});
+
+test("validation block variable", () => {
+  const app = Testing.app();
+  const stack = new TerraformStack(app, "test");
+
+  new TerraformVariable(stack, "test-variable", {
+    type: "string",
+    validation: [
+      {
+        errorMessage: "Validation failed..",
+        condition: Fn.can(Fn.regex("^ami-", "ami-test")),
+      },
+    ],
+  });
+  expect(Testing.synth(stack)).toMatchSnapshot();
+});
+
+test("validation block variable self reference", () => {
+  const app = Testing.app();
+  const stack = new TerraformStack(app, "test");
+
+  const variable = new TerraformVariable(stack, "test-variable", {
+    type: "string",
+  });
+  variable.addValidation({
+    condition: `${Fn.lengthOf(variable.fqn)} > 4 && ${Fn.substr(
+      variable.fqn,
+      0,
+      4
+    )} == "ami-"`,
+    errorMessage:
+      'The image_id value must be a valid AMI id, starting with "ami-".',
   });
   expect(Testing.synth(stack)).toMatchSnapshot();
 });

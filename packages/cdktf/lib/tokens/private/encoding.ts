@@ -1,3 +1,5 @@
+// Copyright (c) HashiCorp, Inc
+// SPDX-License-Identifier: MPL-2.0
 // copied from https://github.com/aws/constructs/blob/e01e47f78ef1e9b600efcd23ff7705aa8d384017/lib/private/encoding.ts
 import { IFragmentConcatenator, IResolvable } from "../resolvable";
 import { TokenizedStringFragments } from "../string-fragments";
@@ -5,14 +7,16 @@ import { Tokenization } from "../token";
 
 // Details for encoding and decoding Tokens into native types; should not be exported
 
-export const BEGIN_STRING_TOKEN_MARKER = "${Token[";
-export const BEGIN_LIST_TOKEN_MARKER = "#{Token[";
+export const BEGIN_STRING_TOKEN_MARKER = "${TfToken[";
+export const BEGIN_LIST_TOKEN_MARKER = "#{TfToken[";
+export const BEGIN_MAP_TOKEN_MARKER = "&{TfToken[";
 export const END_TOKEN_MARKER = "]}";
 
 export const VALID_KEY_CHARS = "a-zA-Z0-9:._-";
 
 const QUOTED_BEGIN_STRING_TOKEN_MARKER = regexQuote(BEGIN_STRING_TOKEN_MARKER);
 const QUOTED_BEGIN_LIST_TOKEN_MARKER = regexQuote(BEGIN_LIST_TOKEN_MARKER);
+const QUOTED_BEGIN_MAP_TOKEN_MARKER = regexQuote(BEGIN_MAP_TOKEN_MARKER);
 const QUOTED_END_TOKEN_MARKER = regexQuote(END_TOKEN_MARKER);
 
 const STRING_TOKEN_REGEX = new RegExp(
@@ -21,6 +25,10 @@ const STRING_TOKEN_REGEX = new RegExp(
 );
 const LIST_TOKEN_REGEX = new RegExp(
   `${QUOTED_BEGIN_LIST_TOKEN_MARKER}([${VALID_KEY_CHARS}]+)${QUOTED_END_TOKEN_MARKER}`,
+  "g"
+);
+const MAP_TOKEN_REGEX = new RegExp(
+  `${QUOTED_BEGIN_MAP_TOKEN_MARKER}([${VALID_KEY_CHARS}]+)${QUOTED_END_TOKEN_MARKER}`,
   "g"
 );
 
@@ -52,6 +60,13 @@ export class TokenString {
    */
   public static forNumbers(s: string) {
     return new TokenString(s, NUMBER_TOKEN_REGEX, 0);
+  }
+
+  /**
+   * Returns a `TokenString` for this string that handles encoded maps
+   */
+  public static forMapToken(s: string) {
+    return new TokenString(s, MAP_TOKEN_REGEX);
   }
 
   constructor(
@@ -123,10 +138,50 @@ export class NullConcat implements IFragmentConcatenator {
   }
 }
 
-export function containsListTokenElement(xs: any[]) {
+/**
+ * Returns true if argument contains a string list token
+ */
+export function containsStringListTokenElement(xs: any[]) {
   return xs.some(
     (x) => typeof x === "string" && TokenString.forListToken(x).test()
   );
+}
+
+/**
+ * Returns true if argument contains a number list token
+ */
+export function containsNumberListTokenElement(xs: any[]) {
+  return xs.some(
+    (x) => typeof x === "number" && extractTokenDouble(x, true) !== undefined
+  );
+}
+
+/**
+ * Returns true if argument contains a string map token
+ */
+export function containsMapToken(xs: { [key: string]: any }) {
+  return Object.keys(xs).some(
+    (x) => typeof x === "string" && TokenString.forMapToken(x).test()
+  );
+}
+
+/**
+ * Returns true if argument is a complex element
+ */
+export function isComplexElement(xs: any) {
+  return (
+    typeof xs === "object" &&
+    xs !== null &&
+    "withinArray" in xs &&
+    "interpolationAsList" in xs
+  );
+}
+
+/**
+ * Returns true if list contains a complex element
+ */
+export function containsComplexElement(xs: any) {
+  return xs.length > 0 && isComplexElement(xs[0]);
 }
 
 /**
@@ -139,11 +194,15 @@ export function unresolved(obj: any): boolean {
   if (typeof obj === "string") {
     return TokenString.forString(obj).test();
   } else if (typeof obj === "number") {
-    return extractTokenDouble(obj) !== undefined;
+    return extractTokenDouble(obj, false) !== undefined;
   } else if (Array.isArray(obj) && obj.length === 1) {
     return (
-      typeof obj[0] === "string" && TokenString.forListToken(obj[0]).test()
+      (typeof obj[0] === "string" && TokenString.forListToken(obj[0]).test()) ||
+      (typeof obj[0] === "number" &&
+        extractTokenDouble(obj[0], true) !== undefined)
     );
+  } else if (obj != null && containsMapToken(obj)) {
+    return true;
   } else {
     return Tokenization.isResolvable(obj);
   }
@@ -173,7 +232,10 @@ export function unresolved(obj: any): boolean {
  * Currently not supporting BE architectures.
  */
 // tslint:disable-next-line:no-bitwise
-const DOUBLE_TOKEN_MARKER_BITS = 0xfbff << 16;
+const DOUBLE_TOKEN_MARKER_BITS = 0xfdff << 16;
+
+// tslint:disable-next-line:no-bitwise
+const DOUBLE_LIST_TOKEN_MARKER_BITS = 0xfbff << 16;
 
 /**
  * Highest encodable number
@@ -195,7 +257,7 @@ const BITS32 = Math.pow(2, 32);
  *
  * We use this to encode Token ordinals.
  */
-export function createTokenDouble(x: number) {
+export function createTokenDouble(x: number, list: boolean) {
   if (Math.floor(x) !== x || x < 0) {
     throw new Error("Can only encode positive integers");
   }
@@ -211,7 +273,9 @@ export function createTokenDouble(x: number) {
 
   // This needs an "x >> 32" but that will make it a 32-bit number instead
   // of a 64-bit number.
-  ints[1] = (shr32(x) & 0xffff) | DOUBLE_TOKEN_MARKER_BITS; // Top 16 bits of number and the mask
+  ints[1] =
+    (shr32(x) & 0xffff) |
+    (list ? DOUBLE_LIST_TOKEN_MARKER_BITS : DOUBLE_TOKEN_MARKER_BITS); // Top 16 bits of number and the mask
   // tslint:enable:no-bitwise
 
   return new Float64Array(buf)[0];
@@ -236,14 +300,20 @@ function shl32(x: number) {
  *
  * Returns undefined if the float is a not an encoded token.
  */
-export function extractTokenDouble(encoded: number): number | undefined {
+export function extractTokenDouble(
+  encoded: number,
+  list: boolean
+): number | undefined {
   const buf = new ArrayBuffer(8);
   new Float64Array(buf)[0] = encoded;
 
   const ints = new Uint32Array(buf);
 
   // tslint:disable:no-bitwise
-  if ((ints[1] & 0xffff0000) !== DOUBLE_TOKEN_MARKER_BITS) {
+  if (
+    (ints[1] & 0xffff0000) !==
+    (list ? DOUBLE_LIST_TOKEN_MARKER_BITS : DOUBLE_TOKEN_MARKER_BITS)
+  ) {
     return undefined;
   }
 

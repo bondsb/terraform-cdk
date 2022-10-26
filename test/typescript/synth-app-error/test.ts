@@ -1,9 +1,5 @@
-/**
- * Testing synthing typescript to json
- *
- * @group typescript
- */
-
+// Copyright (c) HashiCorp, Inc
+// SPDX-License-Identifier: MPL-2.0
 import { TestDriver } from "../../test-helper";
 
 describe("full integration test synth", () => {
@@ -26,9 +22,8 @@ describe("full integration test synth", () => {
       );
 
       expect(errorString).toContain(
-        `Synth command: npm run --silent compile && node thisFileDoesNotExist.js`
+        `npm run --silent compile && node thisFileDoesNotExist.js`
       );
-      expect(errorString).toContain(`Error:         non-zero exit code 1`);
     }
   });
 });

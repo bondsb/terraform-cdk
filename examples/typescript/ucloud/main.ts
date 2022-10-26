@@ -1,10 +1,10 @@
+// Copyright (c) HashiCorp, Inc
+// SPDX-License-Identifier: MPL-2.0
 import { Construct } from "constructs";
 import { App, TerraformStack } from "cdktf";
-import {
-  UcloudProvider,
-  Instance,
-  DataUcloudImages,
-} from "./.gen/providers/ucloud";
+import { UcloudProvider } from "./.gen/providers/ucloud/provider";
+import { DataUcloudImages } from "./.gen/providers/ucloud/data-ucloud-images";
+import { Instance } from "./.gen/providers/ucloud/instance";
 
 class MyStack extends TerraformStack {
   constructor(scope: Construct, name: string) {
@@ -23,7 +23,7 @@ class MyStack extends TerraformStack {
 
     new Instance(this, "web", {
       availabilityZone: "cn-bj2-04",
-      imageId: images.images("0").id,
+      imageId: images.images.get(0).id,
       instanceType: "n-basic-2",
       rootPassword: "wA1234567",
       name: "cdktf-example-instance",

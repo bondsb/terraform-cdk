@@ -1,3 +1,5 @@
+// Copyright (c) HashiCorp, Inc
+// SPDX-License-Identifier: MPL-2.0
 import { Construct } from "constructs";
 import { TerraformBackend } from "../terraform-backend";
 import { keysToSnakeCase } from "../util";
@@ -6,6 +8,7 @@ import {
   DataTerraformRemoteStateConfig,
 } from "../terraform-remote-state";
 
+// eslint-disable-next-line jsdoc/require-jsdoc
 export class MantaBackend extends TerraformBackend {
   constructor(scope: Construct, private readonly props: MantaBackendProps) {
     super(scope, "backend", "manta");
@@ -14,8 +17,20 @@ export class MantaBackend extends TerraformBackend {
   protected synthesizeAttributes(): { [name: string]: any } {
     return keysToSnakeCase({ ...this.props });
   }
+
+  public getRemoteStateDataSource(
+    scope: Construct,
+    name: string,
+    _fromStack: string
+  ): TerraformRemoteState {
+    return new DataTerraformRemoteStateManta(scope, name, {
+      ...this.props,
+      workspace: "${terraform.workspace}",
+    });
+  }
 }
 
+// eslint-disable-next-line jsdoc/require-jsdoc
 export class DataTerraformRemoteStateManta extends TerraformRemoteState {
   constructor(
     scope: Construct,

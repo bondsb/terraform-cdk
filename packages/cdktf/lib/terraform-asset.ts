@@ -1,12 +1,20 @@
-import { Construct, ISynthesisSession, Node } from "constructs";
+// Copyright (c) HashiCorp, Inc
+// SPDX-License-Identifier: MPL-2.0
+import { Construct } from "constructs";
 import * as fs from "fs";
 import * as path from "path";
-import { Manifest } from "./manifest";
-import { copySync, archiveSync, hashPath } from "./private/fs";
-import { Resource } from "./resource";
+import {
+  copySync,
+  archiveSync,
+  hashPath,
+  findFileAboveCwd,
+} from "./private/fs";
+import { ISynthesisSession } from "./synthesize";
+import { addCustomSynthesis } from "./synthesize/synthesizer";
+import { TerraformStack } from "./terraform-stack";
 
 export interface TerraformAssetConfig {
-  // absolute path to the file or folder configured
+  // path to the file or folder configured. If relative, the path is resolved from the location of cdktf.json
   readonly path: string;
   // file type of the asset, either AssetType.FILE, AssetType.DIRECTORY, AssetType.ARCHIVE
   readonly type?: AssetType;
@@ -23,7 +31,9 @@ export enum AssetType {
 const ARCHIVE_NAME = "archive.zip";
 const ASSETS_DIRECTORY = "assets";
 
-export class TerraformAsset extends Resource {
+// eslint-disable-next-line jsdoc/require-jsdoc
+export class TerraformAsset extends Construct {
+  private stack: TerraformStack;
   private sourcePath: string;
   // hash value of the asset that can be passed to consuming constructs (e.g. to not recreate a lambda function in case the underlying files did not change)
   public assetHash: string;
@@ -40,16 +50,31 @@ export class TerraformAsset extends Resource {
   constructor(scope: Construct, id: string, config: TerraformAssetConfig) {
     super(scope, id);
 
-    if (!path.isAbsolute(config.path)) {
-      throw new Error(
-        `TerraformAsset path needs to be absolute, got relative path: '${config.path}'`
-      );
+    this.stack = TerraformStack.of(this);
+
+    if (path.isAbsolute(config.path)) {
+      this.sourcePath = config.path;
+    } else {
+      const cdktfJsonPath =
+        scope.node.tryGetContext("cdktfJsonPath") ??
+        findFileAboveCwd("cdktf.json");
+      if (cdktfJsonPath) {
+        // Relative paths are always considered to be relative to cdktf.json, but operations are performed relative to process.cwd
+        const absolutePath = path.resolve(
+          path.dirname(cdktfJsonPath),
+          config.path
+        );
+        this.sourcePath = path.relative(process.cwd(), absolutePath);
+      } else {
+        throw new Error(
+          `TerraformAsset ${id} was created with a relative path '${config.path}', but no cdktf.json file was found to base it on.`
+        );
+      }
     }
 
-    const stat = fs.statSync(config.path);
+    const stat = fs.statSync(this.sourcePath);
     const inferredType = stat.isFile() ? AssetType.FILE : AssetType.DIRECTORY;
     this.type = config.type ?? inferredType;
-    this.sourcePath = config.path;
     this.assetHash = config.assetHash || hashPath(this.sourcePath);
 
     if (stat.isFile() && this.type !== AssetType.FILE) {
@@ -63,12 +88,16 @@ export class TerraformAsset extends Resource {
         `TerraformAsset ${id} expects path to be a file, a directory was passed: '${config.path}'`
       );
     }
+
+    addCustomSynthesis(this, {
+      onSynthesize: this._onSynthesize.bind(this),
+    });
   }
 
   private get namedFolder(): string {
     return path.posix.join(
       ASSETS_DIRECTORY,
-      this.stack.getLogicalId(Node.of(this))
+      this.stack.getLogicalId(this.node)
     );
   }
 
@@ -96,11 +125,10 @@ export class TerraformAsset extends Resource {
     }
   }
 
-  protected onSynthesize(session: ISynthesisSession) {
-    const manifest = session.manifest as Manifest;
-    const stackManifest = manifest.forStack(this.stack);
+  private _onSynthesize(session: ISynthesisSession) {
+    const stackManifest = session.manifest.forStack(this.stack);
     const basePath = path.join(
-      session.outdir,
+      session.manifest.outdir,
       stackManifest.synthesizedStackPath,
       ".."
     );
@@ -108,7 +136,7 @@ export class TerraformAsset extends Resource {
     // Cleanup existing assets
     const previousVersionsFolder = path.join(basePath, this.namedFolder);
     if (fs.existsSync(previousVersionsFolder)) {
-      fs.rmdirSync(previousVersionsFolder, { recursive: true });
+      fs.rmSync(previousVersionsFolder, { recursive: true });
     }
 
     const targetPath = path.join(basePath, this.path);

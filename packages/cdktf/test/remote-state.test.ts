@@ -1,3 +1,5 @@
+// Copyright (c) HashiCorp, Inc
+// SPDX-License-Identifier: MPL-2.0
 import { Testing, TerraformStack } from "../lib";
 import * as b from "../lib/backends";
 import { TestResource } from "./helper";
@@ -298,7 +300,7 @@ test("s3 reference", () => {
   });
 
   new TestResource(stack, "test_resource", {
-    name: remoteState.get("name"),
+    name: remoteState.getString("name"),
   });
 
   expect(Testing.synth(stack)).toMatchSnapshot();

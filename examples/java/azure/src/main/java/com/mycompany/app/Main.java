@@ -7,9 +7,8 @@ import com.hashicorp.cdktf.App;
 import com.hashicorp.cdktf.TerraformOutput;
 import com.hashicorp.cdktf.TerraformStack;
 
-import imports.azurerm.AzurermProvider;
-import imports.azurerm.AzurermProviderFeatures;
-import imports.azurerm.VirtualNetwork;
+import imports.azurerm.provider.*;
+import imports.azurerm.virtual_network.*;
 
 import software.constructs.Construct;
 
@@ -18,7 +17,7 @@ public class Main extends TerraformStack {
         super(scope, id);
 
         AzurermProvider.Builder.create(this, "AzureRm")
-            .features(Arrays.asList(AzurermProviderFeatures.builder().build()))
+            .features(AzurermProviderFeatures.builder().build())
             .build();
 
         VirtualNetwork.Builder.create(this, "TfVnet")

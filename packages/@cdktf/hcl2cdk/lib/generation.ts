@@ -1,3 +1,5 @@
+// Copyright (c) HashiCorp, Inc
+// SPDX-License-Identifier: MPL-2.0
 import generate from "@babel/generator";
 import template from "@babel/template";
 import * as t from "@babel/types";
@@ -5,7 +7,7 @@ import { DirectedGraph } from "graphology";
 import prettier from "prettier";
 
 import { TerraformResourceBlock, Scope } from "./types";
-import { camelCase, pascalCase, uniqueId } from "./utils";
+import { camelCase, logger, pascalCase, uniqueId } from "./utils";
 import {
   Resource,
   TerraformConfig,
@@ -22,16 +24,34 @@ import {
   referenceToVariableName,
   extractDynamicBlocks,
   constructAst,
-  isRegistryModule,
+  isListExpression,
 } from "./expressions";
+import {
+  TerraformModuleConstraint,
+  escapeAttributeName,
+} from "@cdktf/provider-generator";
+import {
+  getBlockTypeAtPath,
+  getAttributeTypeAtPath,
+  getTypeAtPath,
+} from "./provider";
 
 function getReference(graph: DirectedGraph, id: string) {
+  logger.debug(`Finding reference for ${id}`);
   const neighbors = graph.outNeighbors(id);
+
   if (neighbors.length > 0) {
+    logger.debug(`Found neighbors ${neighbors} for ${id}`);
     const edge = graph.directedEdge(id, neighbors[0]);
+
     if (edge) {
+      logger.debug(`Found first edge ${edge} for ${id}`);
+      logger.debug(
+        `Returning reference ${graph.getEdgeAttribute(edge, "ref")}`
+      );
       return graph.getEdgeAttribute(edge, "ref") as Reference;
     } else {
+      logger.debug(`Found no edge for ${id}`);
       return undefined;
     }
   } else {
@@ -39,20 +59,25 @@ function getReference(graph: DirectedGraph, id: string) {
   }
 }
 
-export const valueToTs = (
+export const valueToTs = async (
   scope: Scope,
   item: TerraformResourceBlock,
+  path: string,
   nodeIds: string[],
-  scopedIds: string[] = []
-): t.Expression => {
+  scopedIds: string[] = [],
+  isModule = false
+): Promise<t.Expression> => {
   switch (typeof item) {
     case "string":
-      return referencesToAst(
+      const wrapInArray = isListExpression(item);
+      const ast = referencesToAst(
         scope,
         item,
-        extractReferencesFromExpression(item, nodeIds, scopedIds),
+        await extractReferencesFromExpression(item, nodeIds, scopedIds),
         scopedIds
       );
+      return wrapInArray ? t.arrayExpression([ast]) : ast;
+
     case "boolean":
       return t.booleanLiteral(item);
     case "number":
@@ -62,79 +87,139 @@ export const valueToTs = (
         return t.nullLiteral();
       }
 
-      if (Array.isArray(item)) {
+      const unwrappedItem =
+        getBlockTypeAtPath(scope.providerSchema, path)?.max_items === 1 &&
+        Array.isArray(item)
+          ? item[0]
+          : item;
+
+      if (Array.isArray(unwrappedItem)) {
         return t.arrayExpression(
-          item.map((i) => valueToTs(scope, i, nodeIds, scopedIds))
+          await Promise.all(
+            unwrappedItem.map((i) =>
+              valueToTs(scope, i, path, nodeIds, scopedIds)
+            )
+          )
         );
       }
 
       return t.objectExpression(
-        Object.entries(item)
-          .map(([key, value]) => {
-            if (key === "lifecycle" || value === undefined) {
-              return undefined;
-            }
+        (
+          await Promise.all(
+            Object.entries(unwrappedItem).map(async ([key, value]) => {
+              if (key === "lifecycle" || value === undefined) {
+                return undefined;
+              }
 
-            if (key === "dynamic") {
-              const { for_each, ...others } = value as any;
-              const dynamicRef = Object.keys(others)[0];
-              return t.objectProperty(
-                t.identifier(dynamicRef),
-                t.arrayExpression()
+              if (key === "dynamic") {
+                const { for_each, ...others } = value as any;
+                const dynamicRef = Object.keys(others)[0];
+                return t.objectProperty(
+                  t.identifier(dynamicRef),
+                  t.arrayExpression()
+                );
+              }
+
+              const itemPath = `${path}.${key}`;
+
+              const attribute = getAttributeTypeAtPath(
+                scope.providerSchema,
+                itemPath
               );
-            }
 
-            return t.objectProperty(
-              t.stringLiteral(key !== "for_each" ? camelCase(key) : key),
-              typeof value === "object" &&
+              // Map type attributes must not be wrapped in arrays
+              const isMapAttribute = Array.isArray(attribute?.type)
+                ? attribute?.type?.[0] === "map"
+                : false;
+
+              const typeMetadata = getTypeAtPath(
+                scope.providerSchema,
+                itemPath
+              );
+
+              const isSingleItemBlock =
+                typeMetadata &&
+                typeof typeMetadata === "object" &&
+                typeMetadata.hasOwnProperty("max_items")
+                  ? (typeMetadata as any).max_items === 1
+                  : false;
+
+              const shouldBeArray =
+                typeof value === "object" &&
                 !Array.isArray(value) &&
-                key !== "tags"
-                ? t.arrayExpression([
-                    valueToTs(scope, value, nodeIds, scopedIds),
-                  ])
-                : valueToTs(scope, value, nodeIds, scopedIds)
-            );
-          })
-          .filter((expr) => expr !== undefined) as t.ObjectProperty[]
+                !isSingleItemBlock &&
+                !isMapAttribute &&
+                key !== "tags";
+
+              const keepKeyName: boolean =
+                !isModule && (key === "for_each" || !typeMetadata);
+
+              return t.objectProperty(
+                t.stringLiteral(
+                  keepKeyName ? key : escapeAttributeName(camelCase(key))
+                ),
+                shouldBeArray
+                  ? t.arrayExpression([
+                      await valueToTs(
+                        scope,
+                        value,
+                        itemPath,
+                        nodeIds,
+                        scopedIds
+                      ),
+                    ])
+                  : await valueToTs(scope, value, itemPath, nodeIds, scopedIds)
+              );
+            })
+          )
+        ).filter((expr) => expr !== undefined) as t.ObjectProperty[]
       );
   }
   throw new Error("Unsupported type " + item);
 };
 
-export function backendToExpression(
+export async function backendToExpression(
   scope: Scope,
   tf: TerraformConfig["backend"],
   nodeIds: string[]
-): t.Statement[] {
-  return Object.entries(tf || {}).reduce(
-    (carry, [type, [config]]) => [
-      ...carry,
-      t.expressionStatement(
-        t.newExpression(
-          t.memberExpression(
-            t.identifier("cdktf"),
-            t.identifier(pascalCase(`${type}Backend`))
-          ),
-          [
-            t.thisExpression(),
-            t.objectExpression(
-              Object.entries(config).reduce(
-                (arr, [property, value]) => [
-                  ...arr,
-                  t.objectProperty(
-                    t.identifier(camelCase(property)),
-                    valueToTs(scope, value, nodeIds)
-                  ),
-                ],
-                [] as t.ObjectProperty[]
-              )
+): Promise<t.Statement[]> {
+  return (
+    await Promise.all(
+      Object.entries(tf || {}).map(async ([type, [config]]) =>
+        t.expressionStatement(
+          t.newExpression(
+            t.memberExpression(
+              t.identifier("cdktf"),
+              t.identifier(pascalCase(`${type}Backend`))
             ),
-          ]
+            [
+              t.thisExpression(),
+              t.objectExpression(
+                (
+                  await Promise.all(
+                    Object.entries(config).map(async ([property, value]) =>
+                      t.objectProperty(
+                        t.identifier(camelCase(property)),
+                        await valueToTs(
+                          scope,
+                          value,
+                          "path-for-backends-can-be-ignored",
+                          nodeIds
+                        )
+                      )
+                    )
+                  )
+                ).reduce(
+                  (carry, item) => [...carry, item],
+                  [] as t.ObjectProperty[]
+                )
+              ),
+            ]
+          )
         )
-      ),
-    ],
-    [] as t.Statement[]
-  );
+      )
+    )
+  ).reduce((carry, item) => [...carry, item], [] as t.Statement[]);
 }
 
 function addOverrideExpression(
@@ -157,20 +242,83 @@ function addOverrideExpression(
   return ast;
 }
 
-export function resource(
+function addOverrideLogicalIdExpression(variable: string, logicalId: string) {
+  const ast = t.expressionStatement(
+    t.callExpression(
+      t.memberExpression(
+        t.identifier(variable),
+        t.identifier("overrideLogicalId")
+      ),
+      [t.stringLiteral(logicalId)]
+    )
+  );
+
+  t.addComment(
+    ast,
+    "leading",
+    "This allows the Terraform resource name to match the original name. You can remove the call if you don't need them to match."
+  );
+
+  return ast;
+}
+
+function getRemoteStateType(item: Resource) {
+  const backendRecord = item.find((val) => val.backend);
+  if (backendRecord) {
+    const backend = backendRecord.backend;
+    switch (backend) {
+      case "remote":
+        return "";
+      case "etcdv3":
+        return "_etcd_v3";
+      default:
+        return `_${backend}`;
+    }
+  } else {
+    return "";
+  }
+}
+
+function resourceType(provider: string, name: string[], item: Resource) {
+  switch (provider) {
+    case "data.terraform":
+      return `cdktf.data_terraform_${name.join("_")}${getRemoteStateType(
+        item
+      )}`;
+    case "null":
+      return `NullProvider.${name.join("_")}`;
+    default:
+      return `${provider}.${name.join("_")}`;
+  }
+}
+
+function mapConfigPerResourceType(resource: string, item: Resource[0]) {
+  // Backends have a slightly different API
+  if (resource.startsWith("cdktf.data_terraform_")) {
+    return item.config;
+  }
+  return item;
+}
+
+export async function resource(
   scope: Scope,
   type: string,
   key: string,
   id: string,
   item: Resource,
   graph: DirectedGraph
-): t.Statement[] {
+): Promise<t.Statement[]> {
   const [provider, ...name] = type.split("_");
   const nodeIds = graph.nodes();
-  const resource = `${provider}.${name.join("_")}`;
+  const resource = resourceType(provider, name, item);
+
+  if (!provider) {
+    throw new Error(`Could not parse resource type '${type}'`);
+  }
 
   const { for_each, count, ...config } = item[0];
-  const dynBlocks = extractDynamicBlocks(config);
+  const mappedConfig = mapConfigPerResourceType(resource, config);
+  const dynBlocks = extractDynamicBlocks(mappedConfig);
   const overrideReference =
     dynBlocks.length || count || for_each
       ? {
@@ -183,17 +331,16 @@ export function resource(
         }
       : undefined;
 
-  const expressions = [
-    ...asExpression(
-      scope,
-      resource,
-      key,
-      config,
-      nodeIds,
-      false,
-      getReference(graph, id) || overrideReference
-    ),
-  ];
+  const expressions = await asExpression(
+    scope,
+    resource,
+    key,
+    mappedConfig,
+    nodeIds,
+    false,
+    false,
+    getReference(graph, id) || overrideReference
+  );
   const varName = variableName(scope, resource, key);
 
   const loopComment = `In most cases loops should be handled in the programming language context and 
@@ -201,9 +348,11 @@ not inside of the Terraform context. If you are looping over something external,
 you should consider using a for loop. If you are looping over something only known to Terraform, e.g. a result of a data source
 you need to keep this like it is.`;
   if (for_each) {
-    const references = extractReferencesFromExpression(for_each, nodeIds, [
-      "each",
-    ]);
+    const references = await extractReferencesFromExpression(
+      for_each,
+      nodeIds,
+      ["each"]
+    );
     expressions.push(
       addOverrideExpression(
         varName,
@@ -215,64 +364,106 @@ you need to keep this like it is.`;
   }
 
   if (count) {
-    const references = extractReferencesFromExpression(count, nodeIds, [
-      "count",
-    ]);
-    expressions.push(
-      addOverrideExpression(
-        varName,
+    if (typeof count === "number") {
+      expressions.push(
+        addOverrideExpression(
+          varName,
+          "count",
+          await valueToTs(
+            scope,
+            count,
+            "path-for-counts-can-be-ignored",
+            nodeIds
+          ),
+          loopComment
+        )
+      );
+    } else {
+      const references = await extractReferencesFromExpression(count, nodeIds, [
         "count",
-        referencesToAst(scope, count, references),
-        loopComment
-      )
-    );
+      ]);
+      expressions.push(
+        addOverrideExpression(
+          varName,
+          "count",
+          referencesToAst(scope, count, references),
+          loopComment
+        )
+      );
+    }
   }
 
   // Check for dynamic blocks
   return [
     ...expressions,
-    ...dynBlocks.map(({ path, for_each, content, scopedVar }) => {
-      return addOverrideExpression(
-        varName,
-        path.substring(1), // The path starts with a dot that we don't want
-        valueToTs(
-          scope,
-          {
-            for_each,
-            content,
-          },
-          nodeIds,
-          [scopedVar]
-        ),
-        loopComment
-      );
-    }),
+    ...(await Promise.all(
+      dynBlocks.map(async ({ path, for_each, content, scopedVar }) => {
+        return addOverrideExpression(
+          varName,
+          path.substring(1), // The path starts with a dot that we don't want
+          await valueToTs(
+            scope,
+            {
+              for_each,
+              content,
+            },
+            "path-for-dynamic-blocks-can-be-ignored",
+            nodeIds,
+            [scopedVar]
+          ),
+          loopComment
+        );
+      })
+    )),
   ];
 }
 
-function asExpression(
+async function asExpression(
   scope: Scope,
   type: string,
   name: string,
   config: TerraformResourceBlock,
   nodeIds: string[],
   isModuleImport: boolean,
+  isProvider: boolean,
   reference?: Reference
 ) {
-  const { provider, providers, lifecycle, ...otherOptions } = config as any;
+  const { lifecycle, providers, ...otherOptions } = config as any;
 
-  const expression = t.newExpression(constructAst(type, isModuleImport), [
-    t.thisExpression(),
-    t.stringLiteral(uniqueId(scope.constructs, name)),
-    valueToTs(scope, otherOptions, nodeIds),
-  ]);
+  const constructId = uniqueId(scope.constructs, name);
+  const overrideId = !isProvider && constructId !== name;
+
+  const expression = t.newExpression(
+    constructAst(scope, type, isModuleImport),
+    [
+      t.thisExpression(),
+      t.stringLiteral(constructId),
+      await valueToTs(
+        scope,
+        {
+          ...otherOptions,
+          providers:
+            providers && Object.keys(providers).length
+              ? Object.entries(providers).map(([key, value]) => ({
+                  moduleAlias: key,
+                  provider: value,
+                }))
+              : undefined,
+        },
+        `${type}`,
+        nodeIds,
+        [],
+        isModuleImport
+      ),
+    ]
+  );
 
   const statements = [];
   const varName = reference
     ? referenceToVariableName(scope, reference)
     : variableName(scope, type, name);
 
-  if (reference || providers || provider || lifecycle) {
+  if (reference || lifecycle || overrideId) {
     statements.push(
       t.variableDeclaration("const", [
         t.variableDeclarator(t.identifier(varName), expression),
@@ -282,39 +473,29 @@ function asExpression(
     statements.push(t.expressionStatement(expression));
   }
 
-  if (provider) {
-    statements.push(
-      addOverrideExpression(
-        varName,
-        "provider",
-        valueToTs(scope, provider, nodeIds)
-      )
-    );
-  }
-  if (providers) {
-    statements.push(
-      addOverrideExpression(
-        varName,
-        "providers",
-        valueToTs(scope, providers, nodeIds)
-      )
-    );
-  }
-
   if (lifecycle) {
     statements.push(
       addOverrideExpression(
         varName,
         "lifecycle",
-        valueToTs(scope, lifecycle, nodeIds)
+        await valueToTs(
+          scope,
+          lifecycle,
+          "path-for-lifecycle-blocks-can-be-ignored",
+          nodeIds
+        )
       )
     );
+  }
+
+  if (overrideId) {
+    statements.push(addOverrideLogicalIdExpression(varName, name));
   }
 
   return statements;
 }
 
-export function output(
+export async function output(
   scope: Scope,
   key: string,
   _id: string,
@@ -334,11 +515,12 @@ export function output(
       sensitive,
     },
     nodeIds,
+    false,
     false
   );
 }
 
-export function variable(
+export async function variable(
   scope: Scope,
   key: string,
   id: string,
@@ -360,30 +542,40 @@ export function variable(
     props,
     nodeIds,
     false,
+    false,
     getReference(graph, id)
   );
 }
 
-export function local(
+export async function local(
   scope: Scope,
   key: string,
   id: string,
   item: TerraformResourceBlock,
   graph: DirectedGraph
-) {
+): Promise<t.VariableDeclaration[]> {
+  logger.debug(`Initializing local resource ${key} with id ${id}`);
   const nodeIds = graph.nodes();
   if (!getReference(graph, id)) {
+    logger.debug(`No reference found for ${key}`);
     return [];
   }
-  return t.variableDeclaration("const", [
-    t.variableDeclarator(
-      t.identifier(variableName(scope, "local", key)),
-      valueToTs(scope, item, nodeIds)
-    ),
-  ]);
+  return [
+    t.variableDeclaration("const", [
+      t.variableDeclarator(
+        t.identifier(variableName(scope, "local", key)),
+        await valueToTs(
+          scope,
+          item,
+          "path-for-local-blocks-can-be-ignored",
+          nodeIds
+        )
+      ),
+    ]),
+  ];
 }
 
-export function modules(
+export async function modules(
   scope: Scope,
   key: string,
   id: string,
@@ -393,46 +585,41 @@ export function modules(
   const [{ source, version, ...props }] = item;
   const nodeIds = graph.nodes();
 
-  if (isRegistryModule(source)) {
-    return asExpression(
-      scope,
-      source,
-      key,
-      props,
-      nodeIds,
-      true,
-      getReference(graph, id)
-    );
-  }
+  const moduleConstraint = new TerraformModuleConstraint(source);
 
   return asExpression(
     scope,
-    "cdktf.TerraformHclModule",
+    moduleConstraint.className,
     key,
-    { ...props, source },
+    props,
     nodeIds,
+    true,
     false,
     getReference(graph, id)
   );
 }
 
-export function provider(
+export async function provider(
   scope: Scope,
   key: string,
-  _id: string,
+  id: string,
   item: Provider[0],
   graph: DirectedGraph
 ) {
   const nodeIds = graph.nodes();
   const { version, ...props } = item;
 
+  const importKey = key === "null" ? "NullProvider" : key;
+
   return asExpression(
     scope,
-    `${key}.${pascalCase(key + "Provider")}`,
+    `${importKey}.${pascalCase(key)}Provider`,
     key,
     props,
     nodeIds,
-    false
+    false,
+    true,
+    getReference(graph, id)
   );
 }
 
@@ -444,23 +631,40 @@ export const providerImports = (providers: string[]) =>
   providers.map((providerName) => {
     const parts = providerName.split("/");
     const name = parts.length > 1 ? parts[1] : parts[0];
+    const importName = name === "null" ? "NullProvider" : name;
     return template(
-      `import * as ${name} from "./.gen/providers/${name.replace("./", "")}"`
+      `import * as ${importName} from "./.gen/providers/${name.replace(
+        "./",
+        ""
+      )}"`
     )() as t.Statement;
   });
 
-export const moduleImports = (modules: Record<string, Module> | undefined) =>
-  Object.values(modules || {})
-    .filter(([{ source }]) => isRegistryModule(source))
-    .map(
-      ([{ source }]) =>
-        template(
-          `import * as ${pascalCase(source)} from "./.gen/modules/${source}"`
-        )() as t.Statement
-    );
+export const moduleImports = (modules: Record<string, Module> | undefined) => {
+  const uniqueModules = new Set<string>();
+  Object.values(modules || {}).map(([module]) =>
+    uniqueModules.add(module.source)
+  );
 
-export function gen(statements: t.Statement[]) {
-  return prettier.format(generate(t.program(statements) as any).code, {
+  const imports: t.Statement[] = [];
+  uniqueModules.forEach((m) => {
+    const moduleConstraint = new TerraformModuleConstraint(m);
+    imports.push(
+      template.ast(
+        `import * as ${moduleConstraint.className} from "./.gen/modules/${moduleConstraint.fileName}"`
+      ) as t.Statement
+    );
+  });
+  return imports;
+};
+
+export async function gen(statements: t.Statement[]) {
+  logger.debug(`Generating code for ${JSON.stringify(statements, null, 2)}`);
+  const code = prettier.format(generate(t.program(statements) as any).code, {
     parser: "babel",
   });
+
+  logger.debug(`Generated code:\n${code}`);
+
+  return code;
 }

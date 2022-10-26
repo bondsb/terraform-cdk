@@ -3,11 +3,11 @@
     "app": "go run main.go",
     "codeMakerOutput": "generated",
     "terraformProviders": [
-        "hashicorp/aws@~> 3.40.0"
+        "hashicorp/aws@~> 3.70.0"
     ],
     "terraformModules": [
         {
-            "name": "aws-eks-module",
+            "name": "eks",
             "source": "terraform-aws-modules/eks/aws",
             "version": "~> 16.0"
         }

@@ -6,35 +6,106 @@ on:
     paths-ignore:
       - "**.md"
       - "docs/**"
+      - "website/**"
+      - "cdk.tf/**"
+      - "tools/update-github-project-board/**"
+
+env:
+  SENTRY_ORG: hashicorp
+  SENTRY_PROJECT: cdktf-cli
 
 jobs:
-  build_artifact:
+  prepare-release:
     if: github.repository == 'hashicorp/terraform-cdk'
     runs-on: ubuntu-latest
+    outputs:
+      tests: ${{ steps.build-test-matrix.outputs.tests }}
+      version: ${{ steps.get_version.outputs.version }}
     container:
       image: docker.mirror.hashicorp.services/hashicorp/jsii-terraform
     env:
       CHECKPOINT_DISABLE: "1"
     steps:
       - uses: actions/checkout@v2
+        with:
+          fetch-depth: 0 # gives standard-version access to all previous commits
       - name: installing dependencies
         run: yarn install
-      - run: tools/align-version.sh "-pre.${{ github.run_number }}"
-      - run: yarn build
-      - run: yarn test
-      - run: yarn package
-      - run: yarn integration
+      - name: Configure git user
+        run: |
+          git config user.name github-team-tf-cdk
+          git config user.email github-team-tf-cdk@hashicorp.com
+      - run: |
+          yarn prepare-next-release
+          tools/align-version.sh
+      - name: version
+        id: get_version
+        run: |
+          version=$(node -p "require('./package.json').version")
+          echo "::set-output name=version::${version}"
+      - name: release status
+        id: get_release_status
+        run: |
+          status=$(sentry-cli releases list | grep 'cdktf-cli-${{ steps.get_version.outputs.version }} ' && echo 'released' || echo 'unreleased')
+          echo "::set-output name=release::${status}"
         env:
-          TERRAFORM_CLOUD_TOKEN: ${{ secrets.TERRAFORM_CLOUD_TOKEN }}
+          SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_TOKEN }}
+      - name: Create a release
+        if: steps.get_release_status.outputs.release == 'unreleased'
+        run: sentry-cli releases new cdktf-cli-${{ steps.get_version.outputs.version }}
+        env:
+          SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_TOKEN }}
+      - name: create bundle
+        run: |
+          yarn install
+          yarn build
+          yarn package
+        env:
+          SENTRY_DSN: ${{ secrets.SENTRY_DSN }}
+      - name: Add sourcemap and commit info to sentry
+        if: steps.get_release_status.outputs.release == 'unreleased'
+        run: |
+          sentry-cli releases files cdktf-cli-${{ steps.get_version.outputs.version }} upload-sourcemaps ./packages/cdktf-cli/bundle
+          sentry-cli releases set-commits --auto cdktf-cli-${{ steps.get_version.outputs.version }}
+        env:
+          SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_TOKEN }}
       - name: Upload artifact
         uses: actions/upload-artifact@v1
         with:
           name: dist
           path: dist
+      - name: Upload edge-provider bindings
+        uses: actions/upload-artifact@v2
+        if: ${{ !inputs.skip_setup }}
+        with:
+          name: edge-provider-bindings
+          path: packages/@cdktf/provider-generator/edge-provider-bindings
+      - name: publish tag
+        run: git push --follow-tags
+
+  unit_test:
+    needs:
+      - prepare-release
+    uses: ./.github/workflows/unit.yml
+    with:
+      concurrency_group_prefix: release-next
+    secrets: inherit
+
+  integration_test:
+    needs:
+      - prepare-release
+    uses: ./.github/workflows/integration.yml
+    with:
+      skip_setup: true
+      concurrency_group_prefix: release-next
+    secrets: inherit
 
   release_npm:
     name: Release to NPM
-    needs: build_artifact
+    needs:
+      - prepare-release
+      - integration_test
+      - unit_test
     runs-on: ubuntu-latest
     container:
       image: docker.mirror.hashicorp.services/hashicorp/jsii-terraform
@@ -51,7 +122,10 @@ jobs:
 
   release_pypi:
     name: Release to PyPi
-    needs: build_artifact
+    needs:
+      - prepare-release
+      - integration_test
+      - unit_test
     runs-on: ubuntu-latest
     container:
       image: docker.mirror.hashicorp.services/hashicorp/jsii-terraform
@@ -68,7 +142,10 @@ jobs:
 
   release_maven:
     name: Release to Maven
-    needs: build_artifact
+    needs:
+      - prepare-release
+      - integration_test
+      - unit_test
     runs-on: ubuntu-latest
     container:
       image: docker.mirror.hashicorp.services/hashicorp/jsii-terraform
@@ -83,13 +160,17 @@ jobs:
         env:
           MAVEN_PASSWORD: ${{ secrets.MAVEN_PASSWORD }}
           MAVEN_USERNAME: ${{ secrets.MAVEN_USERNAME }}
+          MAVEN_ENDPOINT: https://hashicorp.oss.sonatype.org
           MAVEN_GPG_PRIVATE_KEY: ${{ secrets.MAVEN_GPG_PRIVATE_KEY }}
           MAVEN_GPG_PRIVATE_KEY_PASSPHRASE: ${{ secrets.MAVEN_GPG_PRIVATE_KEY_PASSPHRASE }}
           MAVEN_STAGING_PROFILE_ID: ${{ secrets.MAVEN_STAGING_PROFILE_ID }}
 
   release_nuget:
     name: Release to NuGet
-    needs: build_artifact
+    needs:
+      - prepare-release
+      - integration_test
+      - unit_test
     runs-on: ubuntu-latest
     container:
       image: docker.mirror.hashicorp.services/hashicorp/jsii-terraform
@@ -106,7 +187,10 @@ jobs:
 
   release_golang:
     name: Release Go to Github Repo
-    needs: build_artifact
+    needs:
+      - prepare-release
+      - integration_test
+      - unit_test
     runs-on: ubuntu-latest
     container:
       image: docker.mirror.hashicorp.services/hashicorp/jsii-terraform
@@ -122,3 +206,33 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.TERRAFORM_CDK_GO_REPO_GITHUB_TOKEN }}
           GIT_USER_NAME: "CDK for Terraform Team"
           GIT_USER_EMAIL: "github-team-tf-cdk@hashicorp.com"
+
+  release_sentry:
+    name: Finalize the sentry release
+    needs:
+      - prepare-release
+      - integration_test
+      - unit_test
+      - release_npm
+    runs-on: ubuntu-latest
+    container:
+      image: docker.mirror.hashicorp.services/hashicorp/jsii-terraform
+    steps:
+      - uses: actions/checkout@v2
+      - name: version
+        id: get_version
+        run: |
+          version=$(node -p "require('./package.json').version")
+          echo "::set-output name=version::${version}"
+      - name: release status
+        id: get_release_status
+        run: |
+          status=$(sentry-cli releases list | grep 'cdktf-cli-${{ steps.get_version.outputs.version }} ' && echo 'released' || echo 'unreleased')
+          echo "::set-output name=release::${status}"
+        env:
+          SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_TOKEN }}
+      - name: Create a release
+        if: steps.get_release_status.outputs.release == 'unreleased'
+        run: sentry-cli releases finalize cdktf-cli-${{ steps.get_version.outputs.version }}
+        env:
+          SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_TOKEN }}

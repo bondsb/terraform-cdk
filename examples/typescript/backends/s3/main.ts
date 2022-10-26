@@ -1,3 +1,5 @@
+// Copyright (c) HashiCorp, Inc
+// SPDX-License-Identifier: MPL-2.0
 import { Construct } from "constructs";
 import {
   App,
@@ -5,7 +7,8 @@ import {
   S3Backend,
   DataTerraformRemoteStateS3,
 } from "cdktf";
-import { AwsProvider, DataAwsS3BucketObject } from "./.gen/providers/aws";
+import { AwsProvider } from "./.gen/providers/aws/provider";
+import { DataAwsS3BucketObject } from "./.gen/providers/aws/data-aws-s3-bucket-object";
 
 class MyStack extends TerraformStack {
   constructor(scope: Construct, name: string) {
@@ -33,7 +36,7 @@ class MyStack extends TerraformStack {
     // Reference Remote State
     new DataAwsS3BucketObject(this, "object", {
       bucket: "objectbucket",
-      key: otherState.get("bucket_key"),
+      key: otherState.getString("bucket_key"),
     });
 
     // define resources here

@@ -1,9 +1,5 @@
-/**
- * Testing interaction with Terraform Cloud
- *
- * @group typescript
- */
-
+// Copyright (c) HashiCorp, Inc
+// SPDX-License-Identifier: MPL-2.0
 import { TestDriver } from "../../test-helper";
 
 // Since chalk auto-detects the capabilities, colored output is

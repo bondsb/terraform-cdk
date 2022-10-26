@@ -1,12 +1,12 @@
+// Copyright (c) HashiCorp, Inc
+// SPDX-License-Identifier: MPL-2.0
 import { Construct } from "constructs";
 import { App, TerraformStack } from "cdktf";
-import {
-  GoogleProvider,
-  ComputeNetwork,
-  ComputeInstance,
-} from "./.gen/providers/google";
 import * as path from "path";
 import * as fs from "fs";
+import { GoogleProvider } from "./.gen/providers/google/provider";
+import { ComputeNetwork } from "./.gen/providers/google/compute-network";
+import { ComputeInstance } from "./.gen/providers/google/compute-instance";
 
 class MyStack extends TerraformStack {
   constructor(scope: Construct, name: string) {
@@ -31,15 +31,12 @@ class MyStack extends TerraformStack {
     new ComputeInstance(this, "ComputeInstance", {
       name: "cdktf-instance",
       machineType: "f1-micro",
-      bootDisk: [
-        {
-          initializeParams: [
-            {
-              image: "debian-cloud/debian-9",
-            },
-          ],
+      bootDisk: {
+        initializeParams: {
+          image: "debian-cloud/debian-9",
         },
-      ],
+      },
+
       networkInterface: [
         {
           network: network.name,

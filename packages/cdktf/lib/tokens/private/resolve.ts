@@ -1,3 +1,5 @@
+// Copyright (c) HashiCorp, Inc
+// SPDX-License-Identifier: MPL-2.0
 // copied from https://github.com/aws/constructs/blob/e01e47f78ef1e9b600efcd23ff7705aa8d384017/lib/private/resolve.ts
 import { IConstruct } from "constructs";
 import {
@@ -9,8 +11,15 @@ import {
   StringConcat,
 } from "../resolvable";
 import { TokenizedStringFragments } from "../string-fragments";
-import { containsListTokenElement, TokenString, unresolved } from "./encoding";
+import {
+  containsStringListTokenElement,
+  TokenString,
+  unresolved,
+  containsNumberListTokenElement,
+  containsMapToken,
+} from "./encoding";
 import { TokenMap } from "./token-map";
+import { Token } from "../token";
 
 // This file should not be exported to consumers, resolving should happen through Construct.resolve()
 
@@ -29,6 +38,7 @@ export interface IResolveOptions {
   preparing: boolean;
   resolver: ITokenResolver;
   prefix?: string[];
+  previousContext?: IResolveContext;
 }
 
 /**
@@ -54,11 +64,17 @@ export function resolve(obj: any, options: IResolveOptions): any {
     const context: IResolveContext = {
       preparing: options.preparing,
       scope: options.scope,
+      suppressBraces: options.previousContext?.suppressBraces,
+      iteratorContext: options.previousContext?.iteratorContext,
       registerPostProcessor(pp) {
         postProcessor = pp;
       },
       resolve(x: any) {
-        return resolve(x, { ...options, prefix: newPrefix });
+        return resolve(x, {
+          ...options,
+          prefix: newPrefix,
+          previousContext: context,
+        });
       },
     };
 
@@ -109,6 +125,22 @@ export function resolve(obj: any, options: IResolveOptions): any {
   // string - potentially replace all stringified Tokens
   //
   if (typeof obj === "string") {
+    // If this is a "list element" Token, it should never occur by itself in string context
+    if (TokenString.forListToken(obj).test()) {
+      throw new Error(
+        "Found an encoded list token string in a scalar string context. Use 'Fn.element(list, 0)' (not 'list[0]') to extract elements from token lists"
+      );
+    }
+
+    if (
+      obj === Token.STRING_MAP_TOKEN_VALUE ||
+      obj === Token.ANY_MAP_TOKEN_VALUE
+    ) {
+      throw new Error(
+        "Found an encoded map token in a scalar string context. Use 'Fn.lookup(map, key, default)' (not 'map[key]') to extract values from token maps."
+      );
+    }
+
     let str: string = obj;
 
     const tokenStr = TokenString.forString(str);
@@ -139,6 +171,12 @@ export function resolve(obj: any, options: IResolveOptions): any {
   // number - potentially decode Tokenized number
   //
   if (typeof obj === "number") {
+    if (obj === Token.NUMBER_MAP_TOKEN_VALUE) {
+      throw new Error(
+        "Found an encoded map token in a scalar number context. Use 'Fn.lookup(map, key, default)' (not 'map[key]') to extract values from token maps."
+      );
+    }
+
     return resolveNumberToken(obj, makeContext()[0]);
   }
 
@@ -155,8 +193,12 @@ export function resolve(obj: any, options: IResolveOptions): any {
   //
 
   if (Array.isArray(obj)) {
-    if (containsListTokenElement(obj)) {
+    if (containsStringListTokenElement(obj)) {
       return options.resolver.resolveList(obj, makeContext()[0]);
+    }
+
+    if (containsNumberListTokenElement(obj)) {
+      return options.resolver.resolveNumberList(obj, makeContext()[0]);
     }
 
     const arr = obj
@@ -164,6 +206,11 @@ export function resolve(obj: any, options: IResolveOptions): any {
       .filter((x) => typeof x !== "undefined");
 
     return arr;
+  }
+
+  // check for tokenized map
+  if (containsMapToken(obj)) {
+    return options.resolver.resolveMap(obj, makeContext()[0]);
   }
 
   //
@@ -256,6 +303,9 @@ function isConstruct(x: any): boolean {
   return x._children !== undefined && x._metadata !== undefined;
 }
 
+/**
+ * Resolves a number token
+ */
 function resolveNumberToken(x: number, context: IResolveContext): any {
   const token = TokenMap.instance().lookupNumberToken(x);
   if (token === undefined) {

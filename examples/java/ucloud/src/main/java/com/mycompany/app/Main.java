@@ -7,12 +7,14 @@ import java.util.stream.Collectors;
 import java.util.stream.IntStream;
 
 import com.hashicorp.cdktf.App;
+import com.hashicorp.cdktf.Fn;
+import com.hashicorp.cdktf.Token;
 import com.hashicorp.cdktf.TerraformOutput;
 import com.hashicorp.cdktf.TerraformStack;
 
-import imports.ucloud.UcloudProvider;
-import imports.ucloud.DataUcloudImages;
-import imports.ucloud.Instance;
+import imports.ucloud.provider.UcloudProvider;
+import imports.ucloud.data_ucloud_images.DataUcloudImages;;
+import imports.ucloud.instance.Instance;
 import software.constructs.Construct;
 
 public class Main extends TerraformStack {
@@ -32,7 +34,7 @@ public class Main extends TerraformStack {
 
 	Instance.Builder.create(this, "web")
 	    .availabilityZone("cn-bj2-04")
-            .imageId(images.images("0").getId())
+            .imageId(images.getImages().get(0).getId())
             .instanceType("n-basic-2")
             .rootPassword("wA1234567")
             .name("cdktf-example-instance")
